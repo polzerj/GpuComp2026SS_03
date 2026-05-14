@@ -1,5 +1,6 @@
 NVCC := nvcc
-NVCC_FLAGS += -O3 -Wall -Wextra
+NVCC_FLAGS += -O3
+COMPILER_OPTIONS += -Wall -Wextra
 INCLUDES += -Iinclude
 
 SRC_DIR := src
@@ -15,13 +16,13 @@ $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
 
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.cu | $(BUILD_DIR)
-	$(NVCC) $(NVCC_FLAGS) $(INCLUDES) -c $< -o $@
+	$(NVCC) $(NVCC_FLAGS) --compiler-options "$(COMPILER_OPTIONS)" $(INCLUDES) -c $< -o $@
 
 $(EXECUTABLE): $(OBJ_FILES) | $(BUILD_DIR)
-	$(NVCC) $(NVCC_FLAGS) $(OBJ_FILES) -o $@
+	$(NVCC) $(NVCC_FLAGS) --compiler-options "$(COMPILER_OPTIONS)" $(OBJ_FILES) -o $@
 
-run:
-	./$(EXECUTABLE)
+run: $(EXECUTABLE)
+	@./$(EXECUTABLE)
 
 clean:
 	rm -rf $(BUILD_DIR)/*
