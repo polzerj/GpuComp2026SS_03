@@ -3,8 +3,8 @@ from scipy.signal import find_peaks
 from scipy.ndimage import filters
 import numpy as np
 from PIL import Image
-
-IMAGE_DIR = "../data"
+from pathlib import Path
+IMAGE_DIR = Path(__file__).parent.parent.parent/"data"
 
 
 def load_grayscale_image(image_path):
