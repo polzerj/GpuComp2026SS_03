@@ -3,8 +3,9 @@ from scipy.signal import find_peaks
 from scipy.ndimage import filters
 import numpy as np
 from PIL import Image
+from pathlib import Path
 
-IMAGES_DIR = "../data"
+IMAGE_DIR = Path(__file__).parent.parent.parent / "data"
 
 
 def load_grayscale_image(image_path):
@@ -125,7 +126,7 @@ def get_external_boundary_mask(binary):
     return boundary
 
 
-binary = load_grayscale_image(IMAGES_DIR + "/processed/binary.png")
+binary = load_grayscale_image(IMAGE_DIR / "processed" / "binary.png")
 show_img(binary)
 
 kernel = np.ones((4, 4), dtype=np.uint8)
@@ -136,4 +137,4 @@ show_img(cleaned)
 boundary = get_external_boundary_mask(cleaned)
 show_img(boundary)
 
-plt.imsave(IMAGES_DIR + "/processed/boundary.png", boundary, cmap="gray")
+plt.imsave(IMAGE_DIR / "processed" / "boundary.png", boundary, cmap="gray")

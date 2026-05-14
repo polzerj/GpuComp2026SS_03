@@ -4,7 +4,8 @@ from scipy.ndimage import filters
 import numpy as np
 from PIL import Image
 from pathlib import Path
-IMAGE_DIR = Path(__file__).parent.parent.parent/"data"
+
+IMAGE_DIR = Path(__file__).parent.parent.parent / "data"
 
 
 def load_grayscale_image(image_path):
@@ -94,13 +95,13 @@ def otsu_threshold(image):
     return binary.astype(np.uint8) * 255, threshold
 
 
-image = load_grayscale_image(IMAGE_DIR + "/single.JPG")
+image = load_grayscale_image(IMAGE_DIR / "single.JPG")
 
 show_img(image)
 
 blurred = gaussian_filter(image, sigma=1)
-plt.imsave(IMAGE_DIR + "/processed/blurred.png", blurred, cmap="gray")
+plt.imsave(IMAGE_DIR / "processed" / "blurred.png", blurred, cmap="gray")
 binary, threshold_value = otsu_threshold(blurred)
 
 show_img(binary)
-plt.imsave(IMAGE_DIR + "/processed/binary.png", binary, cmap="gray")
+plt.imsave(IMAGE_DIR / "processed" / "binary.png", binary, cmap="gray")

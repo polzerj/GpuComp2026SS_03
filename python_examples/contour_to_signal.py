@@ -3,8 +3,9 @@ from scipy.signal import find_peaks
 from scipy.ndimage import filters
 import numpy as np
 from PIL import Image
+from pathlib import Path
 
-IMAGES_DIR = "../data"
+IMAGE_DIR = Path(__file__).parent.parent.parent / "data"
 
 
 def load_grayscale_image(image_path):
@@ -185,7 +186,7 @@ def find_triangular_peaks(
     return list(selected), [signal[i] for i in selected], s
 
 
-boundary = load_grayscale_image(IMAGES_DIR + "/processed/boundary.png")
+boundary = load_grayscale_image(IMAGE_DIR / "processed" / "boundary.png")
 show_img(boundary)
 
 contour = find_contour_chain_approx_simple(boundary)
@@ -226,7 +227,7 @@ ax.add_patch(circle)
 # Draw center
 ax.scatter(center[0], center[1], s=30)
 plt.savefig(
-    IMAGES_DIR + "/processed/contour_circle.png",
+    IMAGE_DIR / "processed" / "contour_circle.png",
     bbox_inches="tight",
     pad_inches=0,
     dpi=300,
@@ -284,7 +285,7 @@ px = [p[0] for p in peak_points]
 py = [p[1] for p in peak_points]
 ax.scatter(px, py, s=80, color="red")
 plt.savefig(
-    IMAGES_DIR + "/processed/contour_circle_peaks.png",
+    IMAGE_DIR / "processed" / "contour_circle_peaks.png",
     bbox_inches="tight",
     pad_inches=0,
     dpi=300,
