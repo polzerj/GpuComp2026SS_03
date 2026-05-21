@@ -1,6 +1,9 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
 
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include "stb_image_write.h"
+
 #include <string>
 #include <stdexcept>
 #include <iostream>
@@ -46,6 +49,41 @@ grayscale_image_t convert_image(const rgb_image_t &rgbImage)
     return grayImage;
 }
 
+int save_gray_image(const grayscale_image_t &grayImage, const std::string &filename){
+
+    int channels = 1;
+    int stride = grayImage.width * channels;
+    
+    return stbi_write_png(filename.c_str(), grayImage.width, grayImage.height, channels, grayImage.data.data(), stride);
+}
+
+void create_test_pattern(){
+
+    int tileSize = 20; 
+
+    grayscale_image_t image;
+    image.height= 800;
+    image.width = 800;
+    image.data.resize(image.width * image.height);
+
+    // Generate Checkerboard Pattern
+    for (int y = 0; y < image.height; y++) {
+        for (int x = 0; x < image.width; x++) {
+            
+            int tileX = x / tileSize;
+            int tileY = y / tileSize;
+
+            if ((tileX + tileY) % 2 == 0) {
+                image.data[y * image.width + x] = 255; // White square
+            } else {
+                image.data[y * image.width + x] = 0;   // Black square
+            }
+        }
+    }
+
+    save_gray_image(image,"../data/processed/test_image.png");
+}
+
 int main()
 {
     grayscale_image_t image = preprocessing("image.png");
@@ -55,5 +93,8 @@ int main()
     std::cout << "Image loaded and converted to grayscale with size " << image.width << "x" << image.height << "." << std::endl;
 
     piece_segmentation(image);
+
+    create_test_pattern();
+
     return 0;
 }
