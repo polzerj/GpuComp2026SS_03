@@ -133,6 +133,7 @@ kernel = np.ones((4, 4), dtype=np.uint8)
 # binary should contain values 0 and 255
 cleaned = morphological_open(binary, kernel, iterations=2)
 show_img(cleaned)
+plt.imsave(IMAGE_DIR / "processed" / "cleaned.png", cleaned, cmap="gray")
 
 boundary = get_external_boundary_mask(cleaned)
 show_img(boundary)

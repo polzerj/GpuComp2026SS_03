@@ -11,6 +11,7 @@
 #include "types.hpp"
 #include "preprocessing.cuh"
 #include "piece_segmentation.cuh"
+#include "ccl.cuh"
 
 rgb_image_t read_image(const std::string &filePath)
 {
@@ -27,6 +28,30 @@ rgb_image_t read_image(const std::string &filePath)
     result.width = width;
     result.height = height;
     result.data = std::vector<uint8_t>(imgData, imgData + width * height * 3);
+
+    return result;
+}
+
+grayscale_image_t read_grayscale_image(const std::string &filePath)
+{
+    int width, height, channels;
+
+    // The last argument '1' tells stb_image to force the output to 1 channel (grayscale)
+    uint8_t *imgData = stbi_load(filePath.c_str(), &width, &height, &channels, 1);
+
+    if (!imgData)
+    {
+        throw std::runtime_error("Failed to load image: " + filePath);
+    }
+
+    grayscale_image_t result;
+    result.width = width;
+    result.height = height;
+    
+    // Size is now width * height * 1
+    result.data.assign(imgData, imgData + width * height);
+
+    stbi_image_free(imgData);
 
     return result;
 }
@@ -95,6 +120,17 @@ int main()
     piece_segmentation(image);
 
     create_test_pattern();
+
+    grayscale_image_t grayImage_cleaned = read_grayscale_image("../data/processed/cleaned.png");
+
+    //set up host labels
+    uint32_t  *global_labels_host = (uint32_t*)malloc(grayImage_cleaned.width* grayImage_cleaned.height * sizeof(unsigned int));
+    playne_ccl(global_labels_host, grayImage_cleaned);
+    
+    grayscale_image_t output_image_playne = visualize_cll(global_labels_host, grayImage_cleaned);
+    save_gray_image(grayImage_cleaned, "../data/processed/beforeplayne.png" );
+    save_gray_image(output_image_playne, "../data/processed/playned.png");
+
 
     return 0;
 }

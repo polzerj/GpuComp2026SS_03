@@ -1,14 +1,19 @@
-import matplotlib.pyplot as plt
-from scipy.signal import find_peaks
-from scipy.ndimage import filters
-import numpy as np
-from PIL import Image
 from pathlib import Path
+from re import U
+
+import matplotlib.pyplot as plt
+import numpy as np
+from numpy.typing import NDArray
+from PIL import Image
+from scipy.ndimage import filters
+from scipy.signal import find_peaks
 
 IMAGE_DIR = Path(__file__).parent.parent.parent / "data"
 
+UINT8_2D = np.ndarray[tuple[int, int], np.dtype[np.uint8]]
 
-def load_grayscale_image(image_path):
+
+def load_grayscale_image(image_path: Path | str) -> UINT8_2D:
     image = Image.open(image_path).convert("L")
     return np.array(image)
 
@@ -33,7 +38,7 @@ DIRECTIONS = [
 ]
 
 
-def trace_contour(boundary):
+def trace_contour(boundary: UINT8_2D) -> list[tuple[int, int]]:
     h, w = boundary.shape
     ys, xs = np.where(boundary > 0)
 
@@ -41,7 +46,7 @@ def trace_contour(boundary):
         return []
 
     # Start point
-    start = (ys[0], xs[0])
+    start: tuple[int, int] = (ys[0], xs[0])
     contour = [start]
     current = start
     prev_dir = 0
@@ -55,11 +60,10 @@ def trace_contour(boundary):
         for i in range(8):
             dir_idx = (prev_dir + i) % 8
             dy, dx = DIRECTIONS[dir_idx]
-            ny = current[0] + dy
-            nx = current[1] + dx
+            ny: int = current[0] + dy
+            nx: int = current[1] + dx
 
             if 0 <= ny < h and 0 <= nx < w and boundary[ny, nx]:
-
                 next_point = (ny, nx)
                 if next_point == start and len(contour) > 10:
                     return contour
@@ -102,7 +106,7 @@ def simplify_chain_approx(contour):
     return simplified
 
 
-def find_contour_chain_approx_simple(boundary):
+def find_contour_chain_approx_simple(boundary: UINT8_2D):
 
     # boundary = get_external_boundary(binary)
     contour = trace_contour(boundary)
@@ -202,7 +206,6 @@ fig, ax = plt.subplots(figsize=(10, 10 / 1000 * 727))
 display_boundary = boundary.copy()
 
 if display_boundary.max() <= 1:
-
     display_boundary = display_boundary * 255
 
 ax.imshow(display_boundary, cmap="gray", vmin=0, vmax=255)
