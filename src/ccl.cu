@@ -255,16 +255,16 @@ void playne_ccl (uint32_t *global_labels, const grayscale_image_t &grayImage) {
     uint8_t   *d_image;
 
     // Allocate device memory
-    cudaMalloc((void**) &d_labels, pixel_count* sizeof(unsigned int));
-    cudaMalloc((void**) &d_image,  pixel_count * sizeof(unsigned char));
+    cudaMalloc((void**) &d_labels, pixel_count* sizeof(uint32_t));
+    cudaMalloc((void**) &d_image,  pixel_count * sizeof(uint8_t));
 
-    cudaMemcpy(d_image, grayImage.data.data(), pixel_count*sizeof(unsigned char), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_image, grayImage.data.data(), pixel_count*sizeof(uint8_t), cudaMemcpyHostToDevice);
 
     cudaStream_t stream1, stream2;
 	cudaStreamCreate(&stream1);
 	cudaStreamCreate(&stream2);
 
-    local_blocked_ccl<<< grid, block, block.x*block.y*sizeof(unsigned int) >>>(d_labels, d_image, grayImage.width, grayImage.height);
+    local_blocked_ccl<<< grid, block, block.x*block.y*sizeof(uint32_t) >>>(d_labels, d_image, grayImage.width, grayImage.height);
     cudaDeviceSynchronize();
 
     // Label Reduction

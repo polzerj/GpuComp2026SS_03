@@ -12,6 +12,7 @@
 #include "preprocessing.cuh"
 #include "piece_segmentation.cuh"
 #include "ccl.cuh"
+#include "boundary_extraction.cuh"
 
 rgb_image_t read_image(const std::string &filePath)
 {
@@ -128,8 +129,12 @@ int main()
     playne_ccl(global_labels_host, grayImage_cleaned);
     
     grayscale_image_t output_image_playne = visualize_cll(global_labels_host, grayImage_cleaned);
-    save_gray_image(grayImage_cleaned, "../data/processed/beforeplayne.png" );
     save_gray_image(output_image_playne, "../data/processed/playned.png");
+
+    uint32_t  *boundary_picture_host = (uint32_t*)malloc(grayImage_cleaned.width* grayImage_cleaned.height * sizeof(unsigned int));
+    extract_boundary(global_labels_host,boundary_picture_host, grayImage_cleaned.width,grayImage_cleaned.height);
+    grayscale_image_t boundary_image = visualize_cll(boundary_picture_host, grayImage_cleaned);
+    save_gray_image(boundary_image, "../data/processed/extracted_boundaries.png");
 
 
     return 0;
