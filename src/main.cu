@@ -119,6 +119,9 @@ int main()
     std::cout << "Image loaded and converted to grayscale with size " << image.width << "x" << image.height << "." << std::endl;
 
     piece_segmentation(image);
+    save_gray_image(image,"../data/processed/after_denoising.png");
+    
+
 
     create_test_pattern();
 
