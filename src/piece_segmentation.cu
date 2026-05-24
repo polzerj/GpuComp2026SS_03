@@ -12,7 +12,7 @@ __global__ void erode(brightness_t* input, brightness_t* output, int width, int 
     }
 
     bool keep_white = true;
-    size_t kernel_size_half = kernel_size / 2;
+    int kernel_size_half = kernel_size / 2;
 
     for (int dy = -kernel_size_half; dy <= kernel_size_half; dy++)
     {
@@ -45,7 +45,7 @@ __global__ void dilate(brightness_t* input, brightness_t* output, int width, int
     }
 
     bool keep_black = true;
-    size_t kernel_size_half = kernel_size / 2;
+    int kernel_size_half = kernel_size / 2;
 
     for (int dy = -kernel_size_half; dy <= kernel_size_half; dy++)
     {
