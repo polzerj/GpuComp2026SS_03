@@ -2,16 +2,21 @@
 #include <cuda_runtime.h>
 #include "types.hpp"
 
-__global__ void segment(brightness_t* image, int width, int height){
+__global__ void erode(brightness_t* image, int width, int height){
 
     int num_pixels = width * height;
     // instantiate shared memories
-    extern __shared__ brightness_t tile1[];
-    extern __shared__ brightness_t tile2[];
+    extern __shared__ brightness_t tile[];
+    
+    
+    
+    
+    
+}
 
-
-
-
+__global__ void dilate(brightness_t* image, int width, int height){
+    int num_pixels = width * height;
+    extern __shared__ brightness_t tile[];
 
 }
 
@@ -25,11 +30,19 @@ void piece_segmentation(grayscale_image_t image){
     brightness_t* d_image;
     cudaMalloc(&d_image, size);
     cudaMemcpy(d_image, h_image, size, cudaMemcpyHostToDevice);
-    // call to the kernel
-    segment<<<1,num_pixels>>>(d_image, image.width, image.height);
+    // call to erosion kernel
+    erode<<<1,num_pixels>>>(d_image, image.width, image.height);
     // Wait for kernel to finish
     cudaDeviceSynchronize();
-    // Copy result back from GPU to CPU
+    // Copy intermediate result back from GPU to CPU
+    cudaMemcpy(h_image, d_image, size, cudaMemcpyDeviceToHost);
+
+    // copy form CPU to GPU
+    cudaMemcpy(d_image, h_image, size, cudaMemcpyHostToDevice);
+    // call to dilation kernel
+    dilate<<<1, num_pixels>>>(d_image, image.width, image.height);
+    cudaDeviceSynchronize();
+    //Copy results back from GPU to CPU
     cudaMemcpy(h_image, d_image, size, cudaMemcpyDeviceToHost);
     // Cleanup
     cudaFree(d_image);
