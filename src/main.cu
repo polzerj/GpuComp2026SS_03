@@ -120,9 +120,9 @@ int main()
 
     auto preprocessing_duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(preprocessing_time_end - preprocessing_time_start);
 
-    std::cout << "Execution time: "
+    std::cout << "Preprocessing time: "
               << preprocessing_duration_ms.count()
-              << " microseconds\n";
+              << " milliseconds\n\n";
 
     image = convert_image(read_image("../data/processed/binarymultiple.png"));
 
@@ -136,16 +136,16 @@ int main()
 
     std:: cout << "[Erosion/Dilation] done " << std::endl;
     auto piece_segmentation_duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(piece_segmentation_time_end - piece_segmentation_time_start);
-    std::cout << "Execution time: "
+    std::cout << "Piece segmentation time: "
               << piece_segmentation_duration_ms.count()
-              << " microseconds\n";
+              << " milliseconds\n\n";
 
     save_gray_image(image,"../data/processed/after_denoising.png");
     
 
 
     create_test_pattern();
-    std:: cout << "[CLL] starting... " << std::endl;
+    std:: cout << "[CCL] starting... " << std::endl;
     grayscale_image_t grayImage_cleaned = image;
 
     //set up host labels
@@ -154,11 +154,11 @@ int main()
     playne_ccl(global_labels_host, grayImage_cleaned);
     auto playne_time_end = std::chrono::high_resolution_clock::now();
 
-    std:: cout << "[CLL] done" << std::endl;
+    std:: cout << "[CCL] done" << std::endl;
     auto playne_duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(playne_time_end - playne_time_start);
-    std::cout << "Execution time: "
+    std::cout << "Playne time: "
               << playne_duration_ms.count()
-              << " microseconds\n";
+              << " milliseconds\n\n";
 
     grayscale_image_t output_image_playne = visualize_cll(global_labels_host, grayImage_cleaned);
     save_gray_image(output_image_playne, "../data/processed/playned.png");
@@ -166,17 +166,17 @@ int main()
     ptr_jmp_out_t arrays;
     std:: cout << "[Pointer jumping] starting... " << std::endl;
 
-    auto boundary_extraction_time_start = std::chrono::high_resolution_clock::now();
+    auto pointer_jumping_time_start = std::chrono::high_resolution_clock::now();
     arrays.boundaries = (uint32_t*)malloc(grayImage_cleaned.width* grayImage_cleaned.height * sizeof(unsigned int));
     pointer_jumping(global_labels_host,arrays , grayImage_cleaned.width,grayImage_cleaned.height);
-    auto boundary_extraction_time_end = std::chrono::high_resolution_clock::now();
+    auto pointer_jumping_time_end = std::chrono::high_resolution_clock::now();
 
     std:: cout << "[Boundary Extraction] done" << std::endl;
-    auto boundary_extraction_duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(boundary_extraction_time_end - boundary_extraction_time_start);
+    auto pointer_jumping_duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(pointer_jumping_time_end - pointer_jumping_time_start);
 
-    std::cout << "Execution time: "
-              << boundary_extraction_duration_ms.count()
-              << " microseconds\n";
+    std::cout << "Pointer jumping time: "
+              << pointer_jumping_duration_ms.count()
+              << " milliseconds\n\n";
     grayscale_image_t boundary_image = visualize_cll(arrays.boundaries, grayImage_cleaned);
     save_gray_image(boundary_image, "../data/processed/extracted_boundaries.png");
 

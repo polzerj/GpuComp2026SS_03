@@ -95,6 +95,14 @@ __global__ void init_pointer_list_and_extract_boundaries(uint32_t *image_data, u
 
 }
 
+__global__ void list_ranking(ptr_jmp_out_t in, uint32_t image_width, uint32_t image_height){
+
+
+}
+__device__ uint32_t get_next(uint32_t* successors, uint32_t current_pixel){
+    
+}
+
 void pointer_jumping(uint32_t * global_labels, ptr_jmp_out_t out, uint32_t image_width, uint32_t image_height) {
     
     //setup all the necessary memory on device and host
@@ -118,6 +126,8 @@ void pointer_jumping(uint32_t * global_labels, ptr_jmp_out_t out, uint32_t image
     init_pointer_list_and_extract_boundaries <<<grid,block>>>(d_image_data_in,image_width,image_height, device_data);
 
     cudaMemcpy(out.boundaries, device_data.boundaries, pixel_count * sizeof(uint32_t), cudaMemcpyDeviceToHost);
+
+
 
     cudaFree(device_data.boundaries);
     cudaFree(d_image_data_in);
