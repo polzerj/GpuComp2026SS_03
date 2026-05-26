@@ -3,6 +3,9 @@
 #include <cstdint>
 #include "types.hpp"
 
+//---------------------------------------------------------------------------------
+// NOTICE OBSOLETE ==> functionality is handled withing the init for pointer jumping
+//----------------------------------------------------------------------------------
 #define BLOCK_WIDTH_X  128
 #define BLOCK_WIDTH_Y  4
 

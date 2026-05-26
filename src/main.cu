@@ -12,7 +12,7 @@
 #include "preprocessing.cuh"
 #include "piece_segmentation.cuh"
 #include "ccl.cuh"
-#include "boundary_extraction.cuh"
+#include "pointerjumping.cuh"
 
 rgb_image_t read_image(const std::string &filePath)
 {
@@ -114,29 +114,34 @@ int main()
 {
     grayscale_image_t image = preprocessing("image.png");
 
-    image = convert_image(read_image("../data/processed/binary.png"));
+    image = convert_image(read_image("../data/processed/binarymultiple.png"));
 
     std::cout << "Image loaded and converted to grayscale with size " << image.width << "x" << image.height << "." << std::endl;
-
-    piece_segmentation(image);
+    std:: cout << "[Erosion/Dilation] starting... " << std::endl;
+    piece_segmentation(image); // black-white enlargement
+    std:: cout << "[Erosion/Dilation] done " << std::endl;
     save_gray_image(image,"../data/processed/after_denoising.png");
     
 
 
     create_test_pattern();
-
-    grayscale_image_t grayImage_cleaned = read_grayscale_image("../data/processed/cleaned.png");
+    std:: cout << "[CLL] starting... " << std::endl;
+    grayscale_image_t grayImage_cleaned = image;
 
     //set up host labels
     uint32_t  *global_labels_host = (uint32_t*)malloc(grayImage_cleaned.width* grayImage_cleaned.height * sizeof(unsigned int));
-    playne_ccl(global_labels_host, grayImage_cleaned);
     
+    playne_ccl(global_labels_host, grayImage_cleaned);
+    std:: cout << "[CLL] done" << std::endl;
     grayscale_image_t output_image_playne = visualize_cll(global_labels_host, grayImage_cleaned);
     save_gray_image(output_image_playne, "../data/processed/playned.png");
 
-    uint32_t  *boundary_picture_host = (uint32_t*)malloc(grayImage_cleaned.width* grayImage_cleaned.height * sizeof(unsigned int));
-    extract_boundary(global_labels_host,boundary_picture_host, grayImage_cleaned.width,grayImage_cleaned.height);
-    grayscale_image_t boundary_image = visualize_cll(boundary_picture_host, grayImage_cleaned);
+    ptr_jmp_out_t arrays;
+    std:: cout << "[Pointer jumping] starting... " << std::endl;
+    arrays.boundaries = (uint32_t*)malloc(grayImage_cleaned.width* grayImage_cleaned.height * sizeof(unsigned int));
+    pointer_jumping(global_labels_host,arrays , grayImage_cleaned.width,grayImage_cleaned.height);
+    std:: cout << "[Boundary Extraction] done" << std::endl;
+    grayscale_image_t boundary_image = visualize_cll(arrays.boundaries, grayImage_cleaned);
     save_gray_image(boundary_image, "../data/processed/extracted_boundaries.png");
 
 

@@ -1,6 +1,6 @@
 NVCC := nvcc
-NVCC_FLAGS += -O3
-COMPILER_OPTIONS += -Wall -Wextra --extended-lambda
+NVCC_FLAGS += -O3 --extended-lambda
+COMPILER_OPTIONS += -Wall -Wextra 
 INCLUDES += -Iinclude
 
 SRC_DIR := src
