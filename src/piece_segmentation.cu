@@ -40,7 +40,7 @@ __global__ void erode(const brightness_t* input, brightness_t* output, int width
 
     bool keep_white = true;
 
-    for (int dy = -radius; dy <= radius && keep_white; dy++)
+    for (int dy = -radius; dy <= radius; dy++)
     {
         for (int dx = -radius; dx <= radius; dx++)
         {
@@ -48,7 +48,6 @@ __global__ void erode(const brightness_t* input, brightness_t* output, int width
            if (value != 255)
            {
             keep_white = false;
-            break;
            }
         }  
     }
@@ -91,7 +90,7 @@ __global__ void dilate(const brightness_t* input, brightness_t* output, int widt
 
     bool make_white = false;
 
-    for (int dy = -radius; dy <= radius && !make_white; dy++)
+    for (int dy = -radius; dy <= radius; dy++)
     {
         for (int dx = -radius; dx <= radius; dx++)
         {
@@ -99,7 +98,6 @@ __global__ void dilate(const brightness_t* input, brightness_t* output, int widt
             if (value == 255)
             {
                 make_white = true;
-                break;
             }
                          
         }
