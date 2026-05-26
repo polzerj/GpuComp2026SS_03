@@ -2,7 +2,7 @@
 #include <cuda_runtime.h>
 #include "types.hpp"
 
-__global__ void erode(brightness_t* input, brightness_t* output, int width, int height, size_t kernel_size){
+__global__ void erode(const brightness_t* input, brightness_t* output, int width, int height, size_t kernel_size){
     extern __shared__ brightness_t tile[];
     int radius = kernel_size / 2;
     int tile_width = blockDim.x + 2 * radius;
@@ -25,7 +25,7 @@ __global__ void erode(brightness_t* input, brightness_t* output, int width, int 
 
         brightness_t value = 0;
 
-        if(global_x >= 0 && global_x < width && global_y >= 0 && global_y <= height){
+        if(global_x >= 0 && global_x < width && global_y >= 0 && global_y < height){
             value = input[global_y * width + global_x];
         }
 
@@ -40,7 +40,7 @@ __global__ void erode(brightness_t* input, brightness_t* output, int width, int 
 
     bool keep_white = true;
 
-    for (int dy = -radius; dy <= radius; dy++)
+    for (int dy = -radius; dy <= radius && keep_white; dy++)
     {
         for (int dx = -radius; dx <= radius; dx++)
         {
@@ -48,6 +48,7 @@ __global__ void erode(brightness_t* input, brightness_t* output, int width, int 
            if (value != 255)
            {
             keep_white = false;
+            break;
            }
         }  
     }
@@ -55,7 +56,7 @@ __global__ void erode(brightness_t* input, brightness_t* output, int width, int 
     output[x + width * y] = keep_white ? 255 : 0;
 }
 
-__global__ void dilate(brightness_t* input, brightness_t* output, int width, int height, size_t kernel_size){
+__global__ void dilate(const brightness_t* input, brightness_t* output, int width, int height, size_t kernel_size){
     extern __shared__ brightness_t tile[];
     int radius = kernel_size / 2;
     int tile_width = blockDim.x + 2 * radius;
@@ -76,7 +77,7 @@ __global__ void dilate(brightness_t* input, brightness_t* output, int width, int
         int global_x = blockIdx.x * blockDim.x + local_x - radius;
 
         brightness_t value = 0;
-        if (global_x >= 0 && global_x < width && global_y >= 0 && global_y <= height)
+        if (global_x >= 0 && global_x < width && global_y >= 0 && global_y < height)
         {
             value = input[global_y * width + global_x];
         }
@@ -90,7 +91,7 @@ __global__ void dilate(brightness_t* input, brightness_t* output, int width, int
 
     bool make_white = false;
 
-    for (int dy = -radius; dy <= radius; dy++)
+    for (int dy = -radius; dy <= radius && !make_white; dy++)
     {
         for (int dx = -radius; dx <= radius; dx++)
         {
@@ -98,6 +99,7 @@ __global__ void dilate(brightness_t* input, brightness_t* output, int width, int
             if (value == 255)
             {
                 make_white = true;
+                break;
             }
                          
         }
