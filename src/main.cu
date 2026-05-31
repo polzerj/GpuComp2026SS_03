@@ -142,12 +142,9 @@ int main()
               << " milliseconds\n\n";
 
     save_gray_image(image,"../data/processed/after_denoising.png");
-    
 
-
-    create_test_pattern();
     std:: cout << "[CCL] starting... " << std::endl;
-    grayscale_image_t grayImage_cleaned = image;
+    grayscale_image_t& grayImage_cleaned = image;
 
     //set up host labels
     auto playne_time_start = std::chrono::high_resolution_clock::now();
@@ -169,6 +166,9 @@ int main()
 
     auto pointer_jumping_time_start = std::chrono::high_resolution_clock::now();
     arrays.boundaries = (uint32_t*)malloc(grayImage_cleaned.width* grayImage_cleaned.height * sizeof(unsigned int));
+    arrays.successors = (uint32_t*)malloc(grayImage_cleaned.width* grayImage_cleaned.height * sizeof(unsigned int));
+    arrays.ranks = (uint32_t*)malloc(grayImage_cleaned.width* grayImage_cleaned.height * sizeof(unsigned int));
+
     pointer_jumping(global_labels_host,arrays , grayImage_cleaned.width,grayImage_cleaned.height);
     auto pointer_jumping_time_end = std::chrono::high_resolution_clock::now();
 
