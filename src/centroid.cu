@@ -8,8 +8,8 @@ __global__ void compute_sums_kernel(
     const uint32_t *image,
     uint32_t width,
     uint32_t height,
-    uint32_t *sum_x,
-    uint32_t *sum_y,
+    unsigned long long *sum_x,
+    unsigned long long *sum_y,
     uint32_t *count)
 {
     uint32_t x = blockIdx.x * blockDim.x + threadIdx.x;
@@ -23,15 +23,15 @@ __global__ void compute_sums_kernel(
 
     if (label > 0)
     {
-        atomicAdd(&sum_x[label], x);
-        atomicAdd(&sum_y[label], y);
+        atomicAdd(&sum_x[label], (unsigned long long) x);
+        atomicAdd(&sum_y[label], (unsigned long long) y);
         atomicAdd(&count[label], 1);
     }
 }
 
 __global__ void compactCentroidsKernel(
-    const uint32_t *sum_x,
-    const uint32_t *sum_y,
+    const unsigned long long *sum_x,
+    const unsigned long long *sum_y,
     const uint32_t *count,
     const uint32_t *valid_labels,
     Centroid *centroids,
@@ -43,8 +43,8 @@ __global__ void compactCentroidsKernel(
 
     uint32_t label = valid_labels[idx];
     uint32_t count_label = count[label];
-    centroids[idx].x = sum_x[label] / count_label;
-    centroids[idx].y = sum_y[label] / count_label;
+    centroids[idx].x = sum_x[label] * 1.0 / count_label;
+    centroids[idx].y = sum_y[label] * 1.0 / count_label;
     centroids[idx].label = label;
 }
 
@@ -60,8 +60,8 @@ thrust::host_vector<Centroid> compute_centroids(const uint32_t *image, uint32_t 
         return thrust::host_vector<Centroid>(); // No non-zero labels
     }
 
-    thrust::device_vector<uint32_t> d_sum_x(max_label + 1, 0.0f);
-    thrust::device_vector<uint32_t> d_sum_y(max_label + 1, 0.0f);
+    thrust::device_vector<unsigned long long> d_sum_x(max_label + 1, 0.0f);
+    thrust::device_vector<unsigned long long> d_sum_y(max_label + 1, 0.0f);
     thrust::device_vector<uint32_t> d_count(max_label + 1, 0u);
 
     dim3 block(16, 16);
@@ -90,7 +90,8 @@ thrust::host_vector<Centroid> compute_centroids(const uint32_t *image, uint32_t 
     thrust::device_vector<uint32_t> d_valid_labels(num_valid);
     thrust::copy_if(indices.begin(), indices.end(), mask.begin(), d_valid_labels.begin(), thrust::identity<bool>());
 
-    thrust::device_vector<Centroid> d_centroids(num_valid);dim3 block2(256);
+    thrust::device_vector<Centroid> d_centroids(num_valid);
+    dim3 block2(256);
     dim3 grid2((num_valid + block2.x - 1) / block2.x);
     compactCentroidsKernel<<<grid2, block2>>>(
         thrust::raw_pointer_cast(d_sum_x.data()),

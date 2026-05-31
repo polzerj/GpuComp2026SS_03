@@ -14,6 +14,7 @@
 #include "piece_segmentation.cuh"
 #include "ccl.cuh"
 #include "pointerjumping.cuh"
+#include "sort_distances.cuh"
 
 rgb_image_t read_image(const std::string &filePath)
 {
@@ -171,7 +172,7 @@ int main()
     pointer_jumping(global_labels_host,arrays , grayImage_cleaned.width,grayImage_cleaned.height);
     auto pointer_jumping_time_end = std::chrono::high_resolution_clock::now();
 
-    std:: cout << "[Boundary Extraction] done" << std::endl;
+    std:: cout << "[Pointer jumping] done" << std::endl;
     auto pointer_jumping_duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(pointer_jumping_time_end - pointer_jumping_time_start);
 
     std::cout << "Pointer jumping time: "
