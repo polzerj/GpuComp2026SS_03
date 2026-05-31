@@ -181,6 +181,13 @@ int main()
     grayscale_image_t boundary_image = visualize_cll(arrays.boundaries, grayImage_cleaned);
     save_gray_image(boundary_image, "../data/processed/extracted_boundaries.png");
 
+    uint32_t* d_image_data_in;
+    int num_pixels = grayImage_cleaned.height * grayImage_cleaned.width;
+    size_t size = num_pixels * sizeof(brightness_t);
+    cudaMalloc(&d_image_data_in, size);
+    cudaMemcpy(d_image_data_in, grayImage_cleaned.data.data(), size, cudaMemcpyHostToDevice);
 
+
+    thrust::host_vector<Centroid> centroids = compute_centroids(d_image_data_in, grayImage_cleaned.width, grayImage_cleaned.height);
     return 0;
 }
