@@ -288,70 +288,70 @@ void pointer_jumping(uint32_t * global_labels, ptr_jmp_out_t out, uint32_t image
     cudaMemcpy(out.successors, device_data.successors, pixel_count * sizeof(uint32_t), cudaMemcpyDeviceToHost);
     cudaMemcpy(out.ranks, d_ranks_a, pixel_count * sizeof(uint32_t), cudaMemcpyDeviceToHost);
 
-    printf("Printing boundaries\n");
-    for (uint32_t y = 0; y < image_height; ++y) {
-        for (uint32_t x = 0; x < image_width; ++x) {
-            uint32_t id = x + y * image_width;
+    // printf("Printing boundaries\n");
+    // for (uint32_t y = 0; y < image_height; ++y) {
+    //     for (uint32_t x = 0; x < image_width; ++x) {
+    //         uint32_t id = x + y * image_width;
             
-            if (out.boundaries[id] != 0) {
-                uint32_t succ = out.successors[id];
+    //         if (out.boundaries[id] != 0) {
+    //             uint32_t succ = out.successors[id];
 
-                uint32_t succ_x = succ % image_width;
-                uint32_t succ_y = succ / image_width;
+    //             uint32_t succ_x = succ % image_width;
+    //             uint32_t succ_y = succ / image_width;
                 
-                printf(
-                    "pixel (%u,%u) id=%u label=%u -> successor id=%u (%u,%u), rank=%u\n",
-                    x,
-                    y,
-                    id,
-                    out.boundaries[id],
-                    succ,
-                    succ_x,
-                    succ_y,
-                    out.ranks[id]
-                );
-            }
-        }
-    }
+    //             printf(
+    //                 "pixel (%u,%u) id=%u label=%u -> successor id=%u (%u,%u), rank=%u\n",
+    //                 x,
+    //                 y,
+    //                 id,
+    //                 out.boundaries[id],
+    //                 succ,
+    //                 succ_x,
+    //                 succ_y,
+    //                 out.ranks[id]
+    //             );
+    //         }
+    //     }
+    // }
 
-    uint32_t bad = 0;
+    // uint32_t bad = 0;
 
-    for (uint32_t id = 0; id < pixel_count; ++id) {
-        uint32_t label = out.boundaries[id];
+    // for (uint32_t id = 0; id < pixel_count; ++id) {
+    //     uint32_t label = out.boundaries[id];
 
-        if (label == 0) {
-            continue;
-        }
+    //     if (label == 0) {
+    //         continue;
+    //     }
 
-        uint32_t succ = out.successors[id];
+    //     uint32_t succ = out.successors[id];
 
-        if (succ >= pixel_count) {
-            printf("BAD: successor out of range: id=%u succ=%u\n", id, succ);
-            bad++;
-            continue;
-        }
+    //     if (succ >= pixel_count) {
+    //         printf("BAD: successor out of range: id=%u succ=%u\n", id, succ);
+    //         bad++;
+    //         continue;
+    //     }
 
-        if (out.boundaries[succ] != label) {
-            printf("BAD: successor has different label: id=%u label=%u succ=%u succ_label=%u\n",
-                id, label, succ, out.boundaries[succ]);
-            bad++;
-            continue;
-        }
+    //     if (out.boundaries[succ] != label) {
+    //         printf("BAD: successor has different label: id=%u label=%u succ=%u succ_label=%u\n",
+    //             id, label, succ, out.boundaries[succ]);
+    //         bad++;
+    //         continue;
+    //     }
 
-        if (succ == label) {
-            // id is the last pixel before root
-            // rank[id] should be max rank of that component
-            continue;
-        }
+    //     if (succ == label) {
+    //         // id is the last pixel before root
+    //         // rank[id] should be max rank of that component
+    //         continue;
+    //     }
 
-        if (out.ranks[succ] != out.ranks[id] + 1) {
-            printf("BAD rank continuity: id=%u rank=%u succ=%u succ_rank=%u label=%u\n",
-                id, out.ranks[id], succ, out.ranks[succ], label);
-            bad++;
-        }
-    }
+    //     if (out.ranks[succ] != out.ranks[id] + 1) {
+    //         printf("BAD rank continuity: id=%u rank=%u succ=%u succ_rank=%u label=%u\n",
+    //             id, out.ranks[id], succ, out.ranks[succ], label);
+    //         bad++;
+    //     }
+    // }
 
-    printf("Rank continuity check: bad=%u\n", bad);
+    // printf("Rank continuity check: bad=%u\n", bad);
 
     
 

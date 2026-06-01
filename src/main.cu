@@ -181,13 +181,31 @@ int main()
     grayscale_image_t boundary_image = visualize_cll(arrays.boundaries, grayImage_cleaned);
     save_gray_image(boundary_image, "../data/processed/extracted_boundaries.png");
 
-    uint32_t* d_image_data_in;
-    int num_pixels = grayImage_cleaned.height * grayImage_cleaned.width;
-    size_t size = num_pixels * sizeof(brightness_t);
-    cudaMalloc(&d_image_data_in, size);
-    cudaMemcpy(d_image_data_in, grayImage_cleaned.data.data(), size, cudaMemcpyHostToDevice);
+    auto centroid_time_start = std::chrono::high_resolution_clock::now();
 
+    thrust::host_vector<Centroid> centroids = compute_centroids(global_labels_host, grayImage_cleaned.width, grayImage_cleaned.height);
 
-    thrust::host_vector<Centroid> centroids = compute_centroids(d_image_data_in, grayImage_cleaned.width, grayImage_cleaned.height);
+    auto centroid_duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - centroid_time_start);
+
+    std::cout << "Centroid time: "
+              << centroid_duration_ms.count()
+              << " milliseconds\n\n";
+
+    auto sort_time_start = std::chrono::high_resolution_clock::now();
+
+    thrust::host_vector<ContourSignalPoint> h_points = sort_distances(arrays.boundaries, arrays.ranks, centroids, grayImage_cleaned.width, grayImage_cleaned.height);
+
+    auto sort_duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - sort_time_start);
+
+     std::cout << "Sort time: "
+              << sort_duration_ms.count()
+              << " milliseconds\n\n";
+
+    for (size_t i = 0; i < std::min<size_t>(h_points.size(), 100); ++i) {
+        const auto& p = h_points[i];
+        printf("label=%u rank=%u point=(%u,%u) dist=%f\n",
+            p.label, p.rank, p.x, p.y, p.distance);
+    }
+
     return 0;
 }

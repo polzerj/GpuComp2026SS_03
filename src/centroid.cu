@@ -59,14 +59,13 @@ __global__ void compactCentroidsKernel(
     centroids[idx].label = label;
 }
 
-thrust::host_vector<Centroid> compute_centroids(const uint32_t *image, uint32_t width, uint32_t height)
+thrust::host_vector<Centroid> compute_centroids(const uint32_t *h_labels, uint32_t width, uint32_t height)
 {
     auto num_pixels = width * height;
 
-    // Idiomatic Thrust casting - image needs to be a device pointer already for this
-    thrust::device_ptr<const uint32_t> d_image = thrust::device_pointer_cast(image);
+    thrust::device_vector<uint32_t> d_labels(h_labels, h_labels + num_pixels);
     
-    uint32_t max_label = thrust::reduce(d_image, d_image + num_pixels, 0u, thrust::maximum<uint32_t>());
+    uint32_t max_label = thrust::reduce(d_labels.begin(), d_labels.end(), 0u, thrust::maximum<uint32_t>());
 
     if (max_label == 0)
     {
@@ -81,7 +80,7 @@ thrust::host_vector<Centroid> compute_centroids(const uint32_t *image, uint32_t 
     dim3 grid((width + block.x - 1) / block.x, (height + block.y - 1) / block.y);
     
     compute_sums_kernel<<<grid, block>>>(
-        image, width, height,
+        thrust::raw_pointer_cast(d_labels.data()), width, height,
         thrust::raw_pointer_cast(d_sum_x.data()),
         thrust::raw_pointer_cast(d_sum_y.data()),
         thrust::raw_pointer_cast(d_count.data())
