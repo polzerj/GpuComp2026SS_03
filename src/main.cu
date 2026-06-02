@@ -181,7 +181,7 @@ int main()
               << preprocessing_duration_ms.count()
               << " milliseconds\n\n";
 
-    image = convert_image(read_image("../data/processed/binarymultiple.png"));
+    image = convert_image(read_image("../data/processed/binary.png"));
 
 
     std::cout << "Image loaded and converted to grayscale with size " << image.width << "x" << image.height << "." << std::endl;
@@ -284,7 +284,7 @@ int main()
     save_contour_signal_csv(h_smoothed, "../data/processed/contour_signal_smoothed.csv");
 
     auto corner_detection_start = std::chrono::high_resolution_clock::now();
-    uint32_t peak_detection_radius = 45;
+    uint32_t peak_detection_radius = 100;
     float prominece_threshold = 10.0f;
     uint32_t distance_threshold = 0;
     thrust::host_vector<PieceCorners> h_corners = detect_corners(h_smoothed, peak_detection_radius, prominece_threshold, distance_threshold);
