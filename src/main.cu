@@ -161,6 +161,47 @@ void save_contour_signal_csv(
     }
 }
 
+grayscale_image_t visualize_corners(
+    const grayscale_image_t& base,
+    const thrust::host_vector<ContourSignalPointExt>& points,
+    const thrust::host_vector<PieceCorners>& corners
+) {
+    grayscale_image_t out = base;
+
+    // darken original image so corner markers are visible
+    for (auto& px : out.data) {
+        px = px / 3;
+    }
+
+    for (const auto& piece : corners) {
+        if (!piece.valid) {
+            printf("Piece not valid\n");
+            continue;
+        }
+
+        for (uint32_t idx : piece.point_indices) {
+            const auto& p = points[idx];
+
+            int cx = static_cast<int>(p.x);
+            int cy = static_cast<int>(p.y);
+
+            // draw white square marker
+            for (int dy = -10; dy <= 10; ++dy) {
+                for (int dx = -10; dx <= 10; ++dx) {
+                    int x = cx + dx;
+                    int y = cy + dy;
+
+                    if (x >= 0 && x < out.width &&
+                        y >= 0 && y < out.height) {
+                        out.data[y * out.width + x] = 255;
+                    }
+                }
+            }
+        }
+    }
+
+    return out;
+}
 
 __global__ void helloFromDevice() {
     int tid = threadIdx.x + blockDim.x * blockIdx.x;
@@ -181,7 +222,7 @@ int main()
               << preprocessing_duration_ms.count()
               << " milliseconds\n\n";
 
-    image = convert_image(read_image("../data/processed/binary.png"));
+    image = convert_image(read_image("../data/processed/binarymultiple.png"));
 
 
     std::cout << "Image loaded and converted to grayscale with size " << image.width << "x" << image.height << "." << std::endl;
@@ -309,6 +350,10 @@ int main()
     save_contour_signal_csv(h_smoothed, "../data/processed/contour_signal_smoothed_cornered.csv");
 
     std::cout << "Found " <<h_corners.size() -  invalid_count << " valid pieces \n\n";
+
+    grayscale_image_t corner_debug = visualize_corners(grayImage_cleaned, h_smoothed, h_corners);
+
+    save_gray_image(corner_debug, "../data/processed/detected_corners.png");
     
 
     return 0;
