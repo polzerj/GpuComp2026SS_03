@@ -273,7 +273,7 @@ int main()
             << " boundary points.\n";
 
     auto smoothing_time_start = std::chrono::high_resolution_clock::now();
-    uint32_t smoothing_radius = 7;
+    uint32_t smoothing_radius = 4;
     thrust::host_vector<ContourSignalPointExt> h_smoothed = smooth_signal(h_points, smoothing_radius);
     auto smoothing_duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - smoothing_time_start);
     std::cout << "Smoothing time: "
