@@ -157,7 +157,7 @@ int main()
               << preprocessing_duration_ms.count()
               << " milliseconds\n\n";
 
-    image = convert_image(read_image("../data/processed/binarymultiple.png"));
+    image = convert_image(read_image("../data/processed/binary.png"));
 
 
     std::cout << "Image loaded and converted to grayscale with size " << image.width << "x" << image.height << "." << std::endl;
@@ -168,10 +168,10 @@ int main()
     auto piece_segmentation_time_end = std::chrono::high_resolution_clock::now();
 
     std:: cout << "[Erosion/Dilation] done " << std::endl;
-    auto piece_segmentation_duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(piece_segmentation_time_end - piece_segmentation_time_start);
+    auto piece_segmentation_duration_ms = std::chrono::duration_cast<std::chrono::microseconds>(piece_segmentation_time_end - piece_segmentation_time_start);
     std::cout << "Piece segmentation time: "
               << piece_segmentation_duration_ms.count()
-              << " milliseconds\n\n";
+              << " microseconds\n\n";
 
     save_gray_image(image,"../data/processed/after_denoising.png");
 
