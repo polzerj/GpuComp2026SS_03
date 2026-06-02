@@ -19,6 +19,8 @@
 #include "ccl.cuh"
 #include "pointerjumping.cuh"
 #include "sort_distances.cuh"
+#include "signal_smoothing.cuh"
+#include "corner_detection.cuh"
 
 rgb_image_t read_image(const std::string &filePath)
 {
@@ -137,6 +139,28 @@ void save_contour_signal_csv(
     }
 }
 
+void save_contour_signal_csv(
+    const thrust::host_vector<ContourSignalPointExt>& points,
+    const std::string& filename
+) {
+    std::ofstream file(filename);
+
+    if (!file.is_open()) {
+        throw std::runtime_error("Failed to open CSV file: " + filename);
+    }
+
+    file << "label,rank,x,y,distance,piece_length\n";
+
+    for (const auto& p : points) {
+        file << p.label << ","
+             << p.rank << ","
+             << p.x << ","
+             << p.y << ","
+             << p.distance << ","
+             << p.piece_length << "\n";
+    }
+}
+
 
 __global__ void helloFromDevice() {
     int tid = threadIdx.x + blockDim.x * blockIdx.x;
@@ -157,7 +181,7 @@ int main()
               << preprocessing_duration_ms.count()
               << " milliseconds\n\n";
 
-    image = convert_image(read_image("../data/processed/binary.png"));
+    image = convert_image(read_image("../data/processed/binarymultiple.png"));
 
 
     std::cout << "Image loaded and converted to grayscale with size " << image.width << "x" << image.height << "." << std::endl;
@@ -247,6 +271,45 @@ int main()
     std::cout << "Saved contour signal with "
             << h_points.size()
             << " boundary points.\n";
+
+    auto smoothing_time_start = std::chrono::high_resolution_clock::now();
+    uint32_t smoothing_radius = 7;
+    thrust::host_vector<ContourSignalPointExt> h_smoothed = smooth_signal(h_points, smoothing_radius);
+    auto smoothing_duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - smoothing_time_start);
+    std::cout << "Smoothing time: "
+              << smoothing_duration_ms.count()
+              << " milliseconds\n\n";
+
+
+    save_contour_signal_csv(h_smoothed, "../data/processed/contour_signal_smoothed.csv");
+
+    auto corner_detection_start = std::chrono::high_resolution_clock::now();
+    uint32_t peak_detection_radius = 45;
+    float prominece_threshold = 10.0f;
+    uint32_t distance_threshold = 0;
+    thrust::host_vector<PieceCorners> h_corners = detect_corners(h_smoothed, peak_detection_radius, prominece_threshold, distance_threshold);
+    auto corner_det_time_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - corner_detection_start);
+    std::cout << "Corner detection time: "
+              << corner_det_time_ms.count()
+              << " milliseconds\n\n";
+
+    auto piece_id = 0; auto invalid_count = 0;
+    std::cout << "Invalid Pieces: ";
+    for(const auto& c : h_corners){
+        piece_id++;
+        if(c.point_indices.size()!= 4){
+            std::cout << " " << piece_id;
+            invalid_count++;
+         }
+        for(uint8_t i= 0; i< c.point_indices.size(); ++i){
+            h_smoothed[c.point_indices.at(i)].distance = 0;
+        }
+    }
+    std::cout << "\n\n";
+    save_contour_signal_csv(h_smoothed, "../data/processed/contour_signal_smoothed_cornered.csv");
+
+    std::cout << "Found " <<h_corners.size() -  invalid_count << " valid pieces \n\n";
+    
 
     return 0;
 }
