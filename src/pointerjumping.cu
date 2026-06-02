@@ -194,7 +194,7 @@ __global__ void list_rank_step(
         rank_out[id] = 0;
         return;
     }
-
+    // i dont particularly like the naming p --> maybe change it to succ_ptr or smth
     uint32_t p = ptr_in[id];
 
     if (p == NIL) {

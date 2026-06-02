@@ -9,6 +9,8 @@
 #include <thrust/device_ptr.h>
 #include "centroid.cuh"
 
+#define THRESHOLD 200
+
 struct is_positive {
     __device__ bool operator()(const uint32_t c) const {
         return c > 0;
@@ -38,6 +40,7 @@ __global__ void compute_sums_kernel(
         atomicAdd(&sum_y[label], (unsigned long long) y);
         atomicAdd(&count[label], 1);
     }
+
 }
 
 __global__ void compactCentroidsKernel(
@@ -54,8 +57,8 @@ __global__ void compactCentroidsKernel(
 
     uint32_t label = valid_labels[idx];
     uint32_t count_label = count[label];
-    centroids[idx].x = sum_x[label] * 1.0 / count_label;
-    centroids[idx].y = sum_y[label] * 1.0 / count_label;
+    centroids[idx].x = (count_label >= THRESHOLD) ? sum_x[label] * 1.0 / count_label : -1.0f;
+    centroids[idx].y = (count_label >= THRESHOLD) ? sum_y[label] * 1.0 / count_label : -1.0f;
     centroids[idx].label = label;
 }
 

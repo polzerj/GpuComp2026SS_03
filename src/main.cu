@@ -8,6 +8,10 @@
 #include <stdexcept>
 #include <iostream>
 #include <chrono>
+#include <fstream>
+#include <algorithm>
+#include <cstdio>
+#include <cuda_runtime.h>
 
 #include "types.hpp"
 #include "preprocessing.cuh"
@@ -112,8 +116,36 @@ void create_test_pattern(){
     save_gray_image(image,"../data/processed/test_image.png");
 }
 
+void save_contour_signal_csv(
+    const thrust::host_vector<ContourSignalPoint>& points,
+    const std::string& filename
+) {
+    std::ofstream file(filename);
+
+    if (!file.is_open()) {
+        throw std::runtime_error("Failed to open CSV file: " + filename);
+    }
+
+    file << "label,rank,x,y,distance\n";
+
+    for (const auto& p : points) {
+        file << p.label << ","
+             << p.rank << ","
+             << p.x << ","
+             << p.y << ","
+             << p.distance << "\n";
+    }
+}
+
+
+__global__ void helloFromDevice() {
+    int tid = threadIdx.x + blockDim.x * blockIdx.x;
+    return;
+}
+
 int main()
 {
+    helloFromDevice<<<2, 4>>>();
     std:: cout << "[Preprocessing] starting... " << std::endl;
     auto preprocessing_time_start = std::chrono::high_resolution_clock::now();
     grayscale_image_t image = preprocessing("image.png");
@@ -183,7 +215,7 @@ int main()
 
     auto centroid_time_start = std::chrono::high_resolution_clock::now();
 
-    thrust::host_vector<Centroid> centroids = compute_centroids(global_labels_host, grayImage_cleaned.width, grayImage_cleaned.height);
+    thrust::host_vector<Centroid> centroids = compute_centroids(arrays.boundaries, grayImage_cleaned.width, grayImage_cleaned.height);
 
     auto centroid_duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - centroid_time_start);
 
@@ -206,6 +238,15 @@ int main()
         printf("label=%u rank=%u point=(%u,%u) dist=%f\n",
             p.label, p.rank, p.x, p.y, p.distance);
     }
+
+    save_contour_signal_csv(
+        h_points,
+        "../data/processed/contour_signal.csv"
+    );
+
+    std::cout << "Saved contour signal with "
+            << h_points.size()
+            << " boundary points.\n";
 
     return 0;
 }

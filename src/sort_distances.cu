@@ -76,6 +76,21 @@ __global__ void make_signal_keys_and_values(
     points[i] = p;
 }
 
+__global__ void filter_boundaries( uint32_t* boundaries, uint32_t pixel_count,
+    const float* center_x, const float* center_y){
+
+    uint32_t i = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (i >= pixel_count) {
+        return;
+    }
+    uint32_t label = boundaries[i];
+
+    boundaries[i] = (center_x[label]== -1.0f && center_y[label] == -1.0f) ? 0 : label;
+    
+}
+
+
 thrust::host_vector<ContourSignalPoint> sort_distances(
     const uint32_t* h_boundaries,
     const uint32_t* h_ranks,
@@ -92,6 +107,45 @@ thrust::host_vector<ContourSignalPoint> sort_distances(
     thrust::device_vector<uint32_t> d_boundaries(h_boundaries, h_boundaries + pixel_count);
     thrust::device_vector<uint32_t> d_ranks(h_ranks, h_ranks + pixel_count);
     
+    
+    // ---------------------------------------------------------------------
+    //    Build sparse centroid lookup arrays:
+    //    center_x[label], center_y[label]
+    // ---------------------------------------------------------------------
+
+    thrust::device_vector<Centroid> d_centroids = h_centroids;
+    uint32_t max_label = 0;
+
+    // this can be made parallel or left out but that increases memory usage
+    for(const auto& c : h_centroids) {
+        if(c.label > max_label) max_label = c.label;
+    }
+    // if left out this needs to take pixel_count instead of max_label + 1
+    thrust::device_vector<float> d_center_x(max_label + 1, -1.0f);
+    thrust::device_vector<float> d_center_y(max_label + 1, -1.0f);
+
+    uint32_t threads = 256;
+    uint32_t centroid_blocks = (static_cast<uint32_t>(h_centroids.size()) + threads - 1) / threads;
+
+    scatter_centroids_by_label<<<centroid_blocks, threads>>>(
+        thrust::raw_pointer_cast(d_centroids.data()),
+        static_cast<uint32_t>(h_centroids.size()),
+        thrust::raw_pointer_cast(d_center_x.data()),
+        thrust::raw_pointer_cast(d_center_y.data())
+    );
+
+    
+    // ---------------------------------------------------------------------
+    // Filter out small blobs and noise
+    // ---------------------------------------------------------------------
+    uint32_t filter_blocks = (pixel_count + threads - 1) / threads;
+
+    filter_boundaries<<<filter_blocks, threads>>> (thrust::raw_pointer_cast(d_boundaries.data()), 
+        pixel_count,
+        thrust::raw_pointer_cast(d_center_x.data()),
+        thrust::raw_pointer_cast(d_center_y.data()));
+
+
     // ---------------------------------------------------------------------
     // Compact boundary pixel IDs
     // ---------------------------------------------------------------------
@@ -116,32 +170,6 @@ thrust::host_vector<ContourSignalPoint> sort_distances(
     if (num_boundary == 0) {
         return thrust::host_vector<ContourSignalPoint>();
     }
-
-    // ---------------------------------------------------------------------
-    //    Build sparse centroid lookup arrays:
-    //    center_x[label], center_y[label]
-    // ---------------------------------------------------------------------
-
-    thrust::device_vector<Centroid> d_centroids = h_centroids;
-    uint32_t max_label = 0;
-
-    // this can be made parallel or left out but that increases memory usage
-    for(const auto& c : h_centroids) {
-        if(c.label > max_label) max_label = c.label;
-    }
-    // if left out this needs to take pixel_count instead of max_label + 1
-    thrust::device_vector<float> d_center_x(max_label + 1, 0.0f);
-    thrust::device_vector<float> d_center_y(max_label + 1, 0.0f);
-
-    uint32_t threads = 256;
-    uint32_t centroid_blocks = (static_cast<uint32_t>(h_centroids.size()) + threads - 1) / threads;
-
-    scatter_centroids_by_label<<<centroid_blocks, threads>>>(
-        thrust::raw_pointer_cast(d_centroids.data()),
-        static_cast<uint32_t>(h_centroids.size()),
-        thrust::raw_pointer_cast(d_center_x.data()),
-        thrust::raw_pointer_cast(d_center_y.data())
-    );
 
 
     // ---------------------------------------------------------------------
