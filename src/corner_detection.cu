@@ -188,11 +188,31 @@ thrust::host_vector<PieceCorners> detect_corners(
     thrust::host_vector<PieceCorners> h_corners;
 
     uint32_t start = 0;
+    int index = 0;
 
     while (start < num_points) {
         uint32_t label = h_smoothed[start].label;
         uint32_t length = h_smoothed[start].piece_length;
         uint32_t end = start + length;
+        
+        uint32_t candidate_count = 0;
+        float max_distance = 0.0f;
+        index++;
+
+        for (uint32_t i = start; i < end; ++i) {
+            max_distance = std::max(max_distance, h_smoothed[i].distance);
+
+            if (h_corners_bool[i]) {
+                candidate_count++;
+            }
+        }
+
+        std::cout << "label=" << label
+                << " length=" << length
+                << " candidates=" << candidate_count
+                << " max_distance=" << max_distance
+                << " piece index=" << index 
+                << "\n";
 
         PieceCorners piece = select_corners_for_piece(
             h_smoothed,
