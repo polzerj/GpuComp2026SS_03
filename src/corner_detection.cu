@@ -1,117 +1,212 @@
 #include "corner_detection.cuh"
 #include <iostream>
 
-__global__ void find_corners(const ContourSignalPointExt* d_smoothed, bool* corners,
-    uint32_t peak_detection_radius, float prominence_threshold, uint32_t num_boundary)
+__global__ void find_corners(const ContourSignalPointExt* d_smoothed,
+    uint8_t* corners,
+    float* scores,
+    uint32_t peak_detection_radius,
+    float prominence_threshold,
+    uint32_t num_boundary)
     {
         uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
         if (idx >= num_boundary)
             return;
-        
+
         ContourSignalPointExt self = d_smoothed[idx];
-        ContourSignalPointExt neighbour_next, neighbour_prev;
+        uint32_t length = self.piece_length;
+        uint32_t rank = self.rank;
+        uint32_t start_idx = idx - rank;
+        uint32_t radius_max = peak_detection_radius;
 
-        uint32_t start_idx = idx - self.rank;
-        uint32_t neighbour_offset_right = (self.rank + 1 ) % self.piece_length;
-        uint32_t neighbour_offset_left = 
-            (((static_cast<int>(self.rank) - 1) % static_cast<int>(self.piece_length)) + static_cast<int>(self.piece_length)) % static_cast<int>(self.piece_length);
-        neighbour_next = d_smoothed[start_idx + neighbour_offset_right];
-        neighbour_prev = d_smoothed[start_idx + neighbour_offset_left];
+        bool is_peak = true;
+        float neighbor_sum = 0.0f;
+        uint32_t neighbor_count = 0;
 
-        bool is_peak = false;
-        // we are at least some kind of local maxima
-        if(self.distance > neighbour_next.distance && self.distance > neighbour_prev.distance)
-        {
+        for (uint32_t radius = 1; radius <= radius_max; ++radius) {
+            uint32_t right_rank = (rank + radius) % length;
+            uint32_t left_rank  = (rank + length - radius) % length;
 
-            is_peak= true;
-            float distance_avg = 0;
-            for(uint8_t radius = 1; radius< peak_detection_radius; ++radius){
+            float right_distance = d_smoothed[start_idx + right_rank].distance;
+            float left_distance  = d_smoothed[start_idx + left_rank].distance;
 
-                neighbour_offset_right = (self.rank + radius )% self.piece_length;
-                neighbour_offset_left = ((self.rank - radius + self.piece_length) % self.piece_length);
-
-                
-                neighbour_next = d_smoothed[start_idx + neighbour_offset_right];
-                neighbour_prev = d_smoothed[start_idx + neighbour_offset_left];
-
-                if(self.distance < neighbour_next.distance || self.distance < neighbour_prev.distance) 
-                {
-                    is_peak = false;
-                    break;
-                }
-                
-                distance_avg = (distance_avg + neighbour_next.distance + neighbour_prev.distance);
-
-
+            if (self.distance <= right_distance || self.distance <= left_distance) {
+                is_peak = false;
+                break;
             }
-            distance_avg = distance_avg / (2 * peak_detection_radius - 1);
-            is_peak = (is_peak && prominence_threshold < (self.distance - distance_avg) );
 
-        
-
+            neighbor_sum += right_distance + left_distance;
+            neighbor_count += 2;
         }
 
-        corners[idx] = is_peak;
+        if (!is_peak || neighbor_count == 0) {
+            corners[idx] = 0;
+            scores[idx] = 0.0f;
+            return;
+        }
 
+        float neighbor_avg = neighbor_sum / static_cast<float>(neighbor_count);
+        float prominence = self.distance - neighbor_avg;
 
+        bool accepted = prominence >= prominence_threshold;
+
+        corners[idx] = accepted ? 1 : 0;
+        scores[idx] = accepted ? prominence : 0.0f;
 }
 
+struct CornerCandidate {
+    uint32_t index;
+    uint32_t rank;
+    float score;
+    float distance;
+};
 
-thrust::host_vector<PieceCorners> detect_corners(thrust::host_vector<ContourSignalPointExt>& h_smoothed, 
-    uint32_t peak_detection_radius, float prominence_threshold, uint32_t distance_threshold){
+static uint32_t cyclic_distance(uint32_t a, uint32_t b, uint32_t length) {
+    uint32_t diff = (a > b) ? (a - b) : (b - a);
+    return std::min(diff, length - diff);
+}
 
-        uint32_t num_points = static_cast<uint32_t>(h_smoothed.size());
+static PieceCorners select_corners_for_piece(
+    const thrust::host_vector<ContourSignalPointExt>& h_smoothed,
+    const thrust::host_vector<uint8_t>& h_is_corner,
+    const thrust::host_vector<float>& h_scores,
+    uint32_t start,
+    uint32_t end,
+    uint32_t min_corner_distance
+) {
+    PieceCorners piece;
+    piece.label = h_smoothed[start].label;
+    piece.valid = false;
 
-        if (num_points == 0) {
-            return thrust::host_vector<PieceCorners>();
+    uint32_t length = end - start;
+
+    if (min_corner_distance == 0) {
+        min_corner_distance = std::max<uint32_t>(1, length / 8);
+    }
+
+    std::vector<CornerCandidate> candidates;
+
+    for (uint32_t i = start; i < end; ++i) {
+        if (h_is_corner[i] == 0) {
+            continue;
         }
-        
-        thrust::device_vector<ContourSignalPointExt> d_smoothed = h_smoothed;
-        thrust::device_vector<bool> d_corners(num_points, false);
 
-        uint32_t threads = 256;
-        uint32_t blocks = (num_points + threads - 1) / threads;
+        candidates.push_back({
+            i,
+            h_smoothed[i].rank,
+            h_scores[i],
+            h_smoothed[i].distance
+        });
+    }
 
-        find_corners <<<blocks, threads>>> (
-            thrust::raw_pointer_cast(d_smoothed.data()),
-            thrust::raw_pointer_cast(d_corners.data()),
-            peak_detection_radius,
-            prominence_threshold,
-            num_points
+    std::sort(
+        candidates.begin(),
+        candidates.end(),
+        [](const CornerCandidate& a, const CornerCandidate& b) {
+            return a.score > b.score;
+        }
+    );
+
+    std::vector<CornerCandidate> selected;
+
+    for (const auto& cand : candidates) {
+        bool far_enough = true;
+
+        for (const auto& chosen : selected) {
+            uint32_t dist = cyclic_distance(
+                cand.rank,
+                chosen.rank,
+                length
+            );
+
+            if (dist < min_corner_distance) {
+                far_enough = false;
+                break;
+            }
+        }
+
+        if (far_enough) {
+            selected.push_back(cand);
+        }
+
+        if (selected.size() == 4) {
+            break;
+        }
+    }
+
+    if (selected.size() != 4) {
+        return piece;
+    }
+
+    std::sort(
+        selected.begin(),
+        selected.end(),
+        [](const CornerCandidate& a, const CornerCandidate& b) {
+            return a.rank < b.rank;
+        }
+    );
+
+    for (const auto& c : selected) {
+        piece.corner_ranks.push_back(c.rank);
+        piece.point_indices.push_back(c.index);
+    }
+
+    piece.valid = true;
+    return piece;
+}
+
+thrust::host_vector<PieceCorners> detect_corners(
+    thrust::host_vector<ContourSignalPointExt>& h_smoothed,
+    uint32_t peak_detection_radius,
+    float prominence_threshold,
+    uint32_t distance_threshold
+) {
+    uint32_t num_points = static_cast<uint32_t>(h_smoothed.size());
+
+    if (num_points == 0) {
+        return thrust::host_vector<PieceCorners>();
+    }
+
+    thrust::device_vector<ContourSignalPointExt> d_smoothed = h_smoothed;
+    thrust::device_vector<uint8_t> d_corners(num_points, 0);
+    thrust::device_vector<float> d_scores(num_points, 0.0f);
+
+    uint32_t threads = 256;
+    uint32_t blocks = (num_points + threads - 1) / threads;
+
+    find_corners<<<blocks, threads>>>(
+        thrust::raw_pointer_cast(d_smoothed.data()),
+        thrust::raw_pointer_cast(d_corners.data()),
+        thrust::raw_pointer_cast(d_scores.data()),
+        peak_detection_radius,
+        prominence_threshold,
+        num_points
+    );
+
+    thrust::host_vector<uint8_t> h_corners_bool = d_corners;
+    thrust::host_vector<float> h_scores = d_scores;
+
+    thrust::host_vector<PieceCorners> h_corners;
+
+    uint32_t start = 0;
+
+    while (start < num_points) {
+        uint32_t label = h_smoothed[start].label;
+        uint32_t length = h_smoothed[start].piece_length;
+        uint32_t end = start + length;
+
+        PieceCorners piece = select_corners_for_piece(
+            h_smoothed,
+            h_corners_bool,
+            h_scores,
+            start,
+            end,
+            distance_threshold
         );
 
-        thrust::host_vector<bool> h_corners_bool = d_corners;
-        thrust::host_vector<PieceCorners> h_corners;
-        if (num_points == 0) return h_corners;
+        h_corners.push_back(piece);
 
-        uint32_t current_label = h_smoothed[0].label;
-        PieceCorners current_piece;
-        current_piece.label = current_label;
-        current_piece.valid = false; 
-        int corners_found = 0;
-
-        for (uint32_t i = 0; i < num_points; ++i) {
-
-            if (h_smoothed[i].label != current_label) {
-                current_piece.valid = (corners_found == 4); 
-                h_corners.push_back(current_piece);
-
-                current_label = h_smoothed[i].label;
-                corners_found = 0;
-                current_piece = PieceCorners();
-                current_piece.label = current_label;
-                current_piece.valid = false;
-            }
-
-            if (h_corners_bool[i]) {
-                current_piece.corner_ranks.push_back(h_smoothed[i].rank);
-                current_piece.point_indices.push_back(i);
-                corners_found++; 
-            }
-        }
-
-        current_piece.valid = (corners_found == 4);
-        h_corners.push_back(current_piece);
-
-        return h_corners;
+        start = end;
     }
+
+    return h_corners;
+}

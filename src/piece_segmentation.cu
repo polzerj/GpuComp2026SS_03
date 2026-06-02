@@ -136,10 +136,10 @@ void piece_segmentation(grayscale_image_t& image){
     // if(err != cudaSuccess){
     //     printf("Runtime error: %s\n", cudaGetErrorString(err));
     // }
-    //erode<<<grid,block>>>(d_tmp, d_output, image.width, image.height, kernel_size);
+    //erode<<<grid,block, shared_mem_bytes>>>(d_tmp, d_output, image.width, image.height, kernel_size);
 
 
-    //dilate<<<grid, block>>>(d_output, d_tmp, image.width, image.height, kernel_size);
+    //dilate<<<grid, block, shared_mem_bytes>>>(d_output, d_tmp, image.width, image.height, kernel_size);
     // err = cudaGetLastError();
     // if(err != cudaSuccess){
     //     printf("Dilate kernel launch failed: %s\n", cudaGetErrorString(err));

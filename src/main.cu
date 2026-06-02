@@ -294,11 +294,11 @@ int main()
               << " milliseconds\n\n";
 
     auto piece_id = 0; auto invalid_count = 0;
-    std::cout << "Invalid Pieces: ";
+    std::cout << "Invalid Pieces: \n";
     for(const auto& c : h_corners){
         piece_id++;
         if(c.point_indices.size()!= 4){
-            std::cout << " " << piece_id;
+            std::cout << " " << piece_id << " with " << c.point_indices.size() << " corners\n";
             invalid_count++;
          }
         for(uint8_t i= 0; i< c.point_indices.size(); ++i){
