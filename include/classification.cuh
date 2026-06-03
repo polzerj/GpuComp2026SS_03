@@ -12,5 +12,6 @@ struct ClassifiedPiece {
 thrust::host_vector<ClassifiedPiece> classify_edges(
     const thrust::host_vector<ContourSignalPointExt>& h_smoothed,
     const thrust::host_vector<PieceCorners>& corners,
+    const thrust::host_vector<Centroid>& centroids,
     float edge_threshold
 );
