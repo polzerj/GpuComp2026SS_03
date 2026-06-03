@@ -21,6 +21,7 @@
 #include "sort_distances.cuh"
 #include "signal_smoothing.cuh"
 #include "corner_detection.cuh"
+#include "classification.cuh"
 
 rgb_image_t read_image(const std::string &filePath)
 {
@@ -314,7 +315,7 @@ int main()
             << " boundary points.\n";
 
     auto smoothing_time_start = std::chrono::high_resolution_clock::now();
-    uint32_t smoothing_radius = 4;
+    uint32_t smoothing_radius = 4; // magic value -- if increased too much corners are hard to detect
     thrust::host_vector<ContourSignalPointExt> h_smoothed = smooth_signal(h_points, smoothing_radius);
     auto smoothing_duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - smoothing_time_start);
     std::cout << "Smoothing time: "
@@ -325,8 +326,8 @@ int main()
     save_contour_signal_csv(h_smoothed, "../data/processed/contour_signal_smoothed.csv");
 
     auto corner_detection_start = std::chrono::high_resolution_clock::now();
-    uint32_t peak_detection_radius = 100;
-    float prominece_threshold = 10.0f;
+    uint32_t peak_detection_radius = 100; // magic value -- lower makes it detect incorrect corners
+    float prominece_threshold = 10.0f; // magic value
     uint32_t distance_threshold = 0;
     thrust::host_vector<PieceCorners> h_corners = detect_corners(h_smoothed, peak_detection_radius, prominece_threshold, distance_threshold);
     auto corner_det_time_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - corner_detection_start);
@@ -354,6 +355,32 @@ int main()
     grayscale_image_t corner_debug = visualize_corners(grayImage_cleaned, h_smoothed, h_corners);
 
     save_gray_image(corner_debug, "../data/processed/detected_corners.png");
+
+    float edge_threshold = 3.0f;
+
+    thrust::host_vector<ClassifiedPiece> classified = classify_edges(h_smoothed, h_corners, edge_threshold);
+
+    for (const auto& p : classified) {
+        if (!p.valid) {
+            std::cout << "label=" << p.label
+                    << " classification failed\n";
+            continue;
+        }
+
+        std::cout << "label=" << p.label << " class=";
+
+        for (char e : p.edges) {
+            std::cout << e;
+        }
+
+        std::cout << " deviations=[";
+
+        for (float d : p.edge_deviations) {
+            std::cout << d << " ";
+        }
+
+        std::cout << "]\n";
+    }
     
 
     return 0;
