@@ -204,6 +204,188 @@ grayscale_image_t visualize_corners(
     return out;
 }
 
+int save_rgb_image(const rgb_image_t& image, const std::string& filename) {
+    int channels = 3;
+    int stride = image.width * channels;
+
+    return stbi_write_png(
+        filename.c_str(),
+        image.width,
+        image.height,
+        channels,
+        image.data.data(),
+        stride
+    );
+}
+
+static void set_rgb_pixel(
+    rgb_image_t& img,
+    int x,
+    int y,
+    uint8_t r,
+    uint8_t g,
+    uint8_t b
+) {
+    if (x < 0 || x >= img.width || y < 0 || y >= img.height) {
+        return;
+    }
+
+    int idx = 3 * (y * img.width + x);
+    img.data[idx + 0] = r;
+    img.data[idx + 1] = g;
+    img.data[idx + 2] = b;
+}
+
+static void draw_square(
+    rgb_image_t& img,
+    int cx,
+    int cy,
+    int radius,
+    uint8_t r,
+    uint8_t g,
+    uint8_t b
+) {
+    for (int dy = -radius; dy <= radius; ++dy) {
+        for (int dx = -radius; dx <= radius; ++dx) {
+            set_rgb_pixel(img, cx + dx, cy + dy, r, g, b);
+        }
+    }
+}
+
+static void color_for_edge_class(
+    char edge_class,
+    uint8_t& r,
+    uint8_t& g,
+    uint8_t& b
+) {
+    switch (edge_class) {
+        case 'L': // straight
+            r = 255; g = 255; b = 255;
+            break;
+
+        case 'V': // knob / outward
+            r = 255; g = 0; b = 0;
+            break;
+
+        case 'C': // hole / inward
+            r = 0; g = 120; b = 255;
+            break;
+
+        default:
+            r = 255; g = 0; b = 255;
+            break;
+    }
+}
+
+rgb_image_t visualize_edge_classes(
+    const grayscale_image_t& base,
+    const thrust::host_vector<ContourSignalPointExt>& points,
+    const thrust::host_vector<PieceCorners>& corners,
+    const thrust::host_vector<ClassifiedPiece>& classified
+) {
+    rgb_image_t out;
+    out.width = base.width;
+    out.height = base.height;
+    out.data.resize(base.width * base.height * 3);
+
+    // dark grayscale background
+    for (int y = 0; y < base.height; ++y) {
+        for (int x = 0; x < base.width; ++x) {
+            uint8_t v = base.data[y * base.width + x] / 4;
+            int idx = 3 * (y * base.width + x);
+
+            out.data[idx + 0] = v;
+            out.data[idx + 1] = v;
+            out.data[idx + 2] = v;
+        }
+    }
+
+    for (const auto& piece : classified) {
+        if (!piece.valid || piece.edges.size() != 4) {
+            continue;
+        }
+
+        const PieceCorners* piece_corners = nullptr;
+
+        for (const auto& c : corners) {
+            if (c.label == piece.label) {
+                piece_corners = &c;
+                break;
+            }
+        }
+
+        if (piece_corners == nullptr ||
+            !piece_corners->valid ||
+            piece_corners->point_indices.size() != 4) {
+            continue;
+        }
+
+        uint32_t first_corner_idx = piece_corners->point_indices[0];
+
+        if (first_corner_idx >= points.size()) {
+            continue;
+        }
+
+        uint32_t piece_start =
+            first_corner_idx - points[first_corner_idx].rank;
+
+        uint32_t piece_length =
+            points[first_corner_idx].piece_length;
+
+        if (piece_length == 0 || piece_start + piece_length > points.size()) {
+            continue;
+        }
+
+        for (uint32_t edge = 0; edge < 4; ++edge) {
+            uint32_t a_idx = piece_corners->point_indices[edge];
+            uint32_t b_idx = piece_corners->point_indices[(edge + 1) % 4];
+
+            if (a_idx >= points.size() || b_idx >= points.size()) {
+                continue;
+            }
+
+            uint32_t rank_a = points[a_idx].rank;
+            uint32_t rank_b = points[b_idx].rank;
+
+            uint32_t edge_len =
+                (rank_b + piece_length - rank_a) % piece_length;
+
+            uint8_t r, g, b;
+            color_for_edge_class(piece.edges[edge], r, g, b);
+
+            // draw all contour points belonging to this edge
+            for (uint32_t d = 0; d <= edge_len; ++d) {
+                uint32_t rank = (rank_a + d) % piece_length;
+                uint32_t idx = piece_start + rank;
+
+                if (idx >= points.size()) {
+                    continue;
+                }
+
+                const auto& p = points[idx];
+
+                // slightly thick contour line
+                draw_square(
+                    out,
+                    static_cast<int>(p.x),
+                    static_cast<int>(p.y),
+                    1,
+                    r, g, b
+                );
+            }
+
+            // draw corners in green on top
+            const auto& a = points[a_idx];
+            const auto& bpt = points[b_idx];
+
+            draw_square(out, a.x, a.y, 4, 0, 255, 0);
+            draw_square(out, bpt.x, bpt.y, 4, 0, 255, 0);
+        }
+    }
+
+    return out;
+}
+
 __global__ void helloFromDevice() {
     int tid = threadIdx.x + blockDim.x * blockIdx.x;
     return;
@@ -356,9 +538,13 @@ int main()
 
     save_gray_image(corner_debug, "../data/processed/detected_corners.png");
 
+    auto classification_start = std::chrono::high_resolution_clock::now();
     float edge_threshold = 3.0f;
-
-    thrust::host_vector<ClassifiedPiece> classified = classify_edges(h_smoothed, h_corners, edge_threshold);
+    thrust::host_vector<ClassifiedPiece> classified = classify_edges(h_smoothed, h_corners, centroids, edge_threshold);
+    auto classification_time_ms = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - classification_start);
+    std::cout << "Classification time: "
+              << classification_time_ms.count()
+              << " microseconds\n\n";
 
     for (const auto& p : classified) {
         if (!p.valid) {
@@ -381,7 +567,9 @@ int main()
 
         std::cout << "]\n";
     }
-    
 
+    rgb_image_t class_debug = visualize_edge_classes(grayImage_cleaned, h_smoothed, h_corners, classified);
+    save_rgb_image(class_debug, "../data/processed/classified_edges.png");
+    
     return 0;
 }
