@@ -2,5 +2,5 @@
 #include "types.hpp"
 
 
-void playne_ccl (uint32_t *global_labels, const grayscale_image_t &grayImage);
+uint32_t* playne_ccl (uint8_t*d_image, uint32_t width, uint32_t height);
 grayscale_image_t visualize_cll(uint32_t *global_labels, const grayscale_image_t &grayImage);

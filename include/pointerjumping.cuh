@@ -7,4 +7,4 @@ typedef struct pointer_jumping_outputs {
     uint32_t* boundaries;
 }ptr_jmp_out_t;
 
-void pointer_jumping(uint32_t * global_labels, ptr_jmp_out_t out, uint32_t image_width, uint32_t image_height);
+ptr_jmp_out_t pointer_jumping(uint32_t * global_labels, uint32_t image_width, uint32_t image_height);

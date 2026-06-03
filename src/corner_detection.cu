@@ -156,6 +156,7 @@ static PieceCorners select_corners_for_piece(
 
 thrust::host_vector<PieceCorners> detect_corners(
     thrust::host_vector<ContourSignalPointExt>& h_smoothed,
+    thrust::device_vector<ContourSignalPointExt>& d_smoothed,
     uint32_t peak_detection_radius,
     float prominence_threshold,
     uint32_t distance_threshold
@@ -166,7 +167,7 @@ thrust::host_vector<PieceCorners> detect_corners(
         return thrust::host_vector<PieceCorners>();
     }
 
-    thrust::device_vector<ContourSignalPointExt> d_smoothed = h_smoothed;
+    //thrust::device_vector<ContourSignalPointExt> d_smoothed = h_smoothed;
     thrust::device_vector<uint8_t> d_corners(num_points, 0);
     thrust::device_vector<float> d_scores(num_points, 0.0f);
 
@@ -194,7 +195,7 @@ thrust::host_vector<PieceCorners> detect_corners(
         uint32_t label = h_smoothed[start].label;
         uint32_t length = h_smoothed[start].piece_length;
         uint32_t end = start + length;
-        
+
         uint32_t candidate_count = 0;
         float max_distance = 0.0f;
         index++;
@@ -207,12 +208,12 @@ thrust::host_vector<PieceCorners> detect_corners(
             }
         }
 
-        std::cout << "label=" << label
-                << " length=" << length
-                << " candidates=" << candidate_count
-                << " max_distance=" << max_distance
-                << " piece index=" << index 
-                << "\n";
+        // std::cout << "label=" << label
+        //         << " length=" << length
+        //         << " candidates=" << candidate_count
+        //         << " max_distance=" << max_distance
+        //         << " piece index=" << index
+        //         << "\n";
 
         PieceCorners piece = select_corners_for_piece(
             h_smoothed,

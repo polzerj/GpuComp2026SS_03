@@ -13,10 +13,10 @@ struct ContourSignalPoint {
     uint32_t rank;
 };
 
-thrust::host_vector<ContourSignalPoint> sort_distances(
-    const uint32_t* h_boundaries,
-    const uint32_t* h_ranks,
-    const thrust::host_vector<Centroid>& h_centroids,
+thrust::device_vector<ContourSignalPoint> sort_distances(
+    const uint32_t* d_boundaries,
+    const uint32_t* d_ranks,
+    const thrust::device_vector<Centroid>& d_centroids,
     uint32_t width,
     uint32_t height
 );

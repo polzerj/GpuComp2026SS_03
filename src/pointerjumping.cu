@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include<cstdio>
+#include <iostream>
 #include "types.hpp"
 #include "pointerjumping.cuh"
 
@@ -184,7 +185,8 @@ __global__ void list_rank_step(
     const uint32_t* rank_in,
     uint32_t* ptr_out,
     uint32_t* rank_out,
-    uint32_t pixel_count
+    uint32_t pixel_count,
+    uint32_t* done
 ) {
     uint32_t id = blockIdx.x * blockDim.x + threadIdx.x;
     if (id >= pixel_count) return;
@@ -203,6 +205,7 @@ __global__ void list_rank_step(
     } else {
         ptr_out[id] = ptr_in[p]; // Set n.next ← n.next.next
         rank_out[id] = rank_in[id] + rank_in[p]; // Set d[n] ← d[n] + d[n.next]
+        atomicExch(done, 0);
     }
 }
 
@@ -216,8 +219,10 @@ __device__ uint32_t get_next(uint32_t* successors, uint32_t current_pixel){
     
 }
 
-void pointer_jumping(uint32_t * global_labels, ptr_jmp_out_t out, uint32_t image_width, uint32_t image_height) {
+ptr_jmp_out_t pointer_jumping(uint32_t * global_labels, uint32_t image_width, uint32_t image_height) {
     
+    ptr_jmp_out_t out;
+
     //setup all the necessary memory on device and host
     uint32_t pixel_count = image_height * image_width;
     size_t bytes = pixel_count * sizeof(uint32_t);
@@ -227,20 +232,19 @@ void pointer_jumping(uint32_t * global_labels, ptr_jmp_out_t out, uint32_t image
     dim3 grid(ceil(image_width/(float)block.x), ceil(image_height/(float)block.y)); 
     
     uint32_t array_size =  pixel_count* sizeof(uint32_t);
-    uint32_t *d_image_data_in;
+    //uint32_t *d_image_data_in;
     ptr_jmp_out_t device_data;
-
     
-    cudaMalloc((void**) &d_image_data_in, array_size);
+    //cudaMalloc((void**) &d_image_data_in, array_size);
     cudaMalloc((void**) &device_data.boundaries, array_size );
     cudaMalloc((void**) &device_data.ranks, array_size );
     cudaMalloc((void**) &device_data.successors, array_size );
 
     
 
-    cudaMemcpy(d_image_data_in, global_labels, pixel_count*sizeof(uint32_t), cudaMemcpyHostToDevice);
+    //cudaMemcpy(d_image_data_in, global_labels, pixel_count*sizeof(uint32_t), cudaMemcpyHostToDevice);
 
-    init_pointer_list_and_extract_boundaries <<<grid,block>>>(d_image_data_in,image_width,image_height, device_data);
+    init_pointer_list_and_extract_boundaries <<<grid,block>>>(global_labels,image_width,image_height, device_data);
     
     // uint32_t* d_roots;            // root per component label
     uint32_t* d_predecessors_a;   // pointer-jumping input
@@ -269,24 +273,41 @@ void pointer_jumping(uint32_t * global_labels, ptr_jmp_out_t out, uint32_t image
     while ((1u << rounds) < pixel_count) { // log2 loop
         rounds++;
     }
+    uint32_t host_done = 0;
+    uint32_t* d_done;
+    cudaMalloc(&d_done, sizeof(int));
 
     for (uint32_t r = 0; r < rounds; ++r) {
+
+        int initial_val = 1;
+        cudaMemcpy(d_done, &initial_val, sizeof(uint32_t), cudaMemcpyHostToDevice);
+
         list_rank_step<<<blocks, threads>>>(
             device_data.boundaries,
             d_predecessors_a,
             d_ranks_a,
             d_predecessors_b,
             d_ranks_b,
-            pixel_count
+            pixel_count,
+            d_done
         );
+
+        cudaMemcpy(&host_done, d_done, sizeof(uint32_t), cudaMemcpyDeviceToHost);
+
+        if (host_done == 1){break;}
 
         std::swap(d_predecessors_a, d_predecessors_b);
         std::swap(d_ranks_a, d_ranks_b);
     }
 
-    cudaMemcpy(out.boundaries, device_data.boundaries, pixel_count * sizeof(uint32_t), cudaMemcpyDeviceToHost);
-    cudaMemcpy(out.successors, device_data.successors, pixel_count * sizeof(uint32_t), cudaMemcpyDeviceToHost);
-    cudaMemcpy(out.ranks, d_ranks_a, pixel_count * sizeof(uint32_t), cudaMemcpyDeviceToHost);
+    // cudaMemcpy(out.boundaries, device_data.boundaries, pixel_count * sizeof(uint32_t), cudaMemcpyDeviceToHost);
+    // cudaMemcpy(out.successors, device_data.successors, pixel_count * sizeof(uint32_t), cudaMemcpyDeviceToHost);
+    // cudaMemcpy(out.ranks, d_ranks_a, pixel_count * sizeof(uint32_t), cudaMemcpyDeviceToHost);
+
+    cudaMemcpy(device_data.ranks, d_ranks_a, bytes, cudaMemcpyDeviceToDevice);
+    out.boundaries = device_data.boundaries;
+    out.successors = device_data.successors;
+    out.ranks = device_data.ranks;
 
     // printf("Printing boundaries\n");
     // for (uint32_t y = 0; y < image_height; ++y) {
@@ -354,15 +375,17 @@ void pointer_jumping(uint32_t * global_labels, ptr_jmp_out_t out, uint32_t image
     // printf("Rank continuity check: bad=%u\n", bad);
 
     
-
-    cudaFree(device_data.boundaries);
-    cudaFree(d_image_data_in);
-    cudaFree(device_data.ranks);
-    cudaFree(device_data.successors);
+    //cudaFree(d_image_data_in);
+    //cudaFree(device_data.boundaries);
+    // cudaFree(device_data.ranks);
+    // cudaFree(device_data.successors);
     cudaFree(d_predecessors_a);
     cudaFree(d_predecessors_b);
     cudaFree(d_ranks_a);
     cudaFree(d_ranks_b);
+    
+
+    return out;
 
 }
 

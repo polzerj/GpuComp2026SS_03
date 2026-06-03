@@ -35,7 +35,7 @@ __global__ void smooth_signal_kernel(
     output[tid].piece_length = length;
 }
 
-thrust::host_vector<ContourSignalPointExt> smooth_signal(const thrust::host_vector<ContourSignalPoint>& h_points, 
+thrust::device_vector<ContourSignalPointExt> smooth_signal(const thrust::host_vector<ContourSignalPoint>& h_points, thrust::device_vector<ContourSignalPoint>& d_input,   
     uint32_t smoothing_radius)
     {
         uint32_t num_points = static_cast<uint32_t>(h_points.size());
@@ -65,7 +65,7 @@ thrust::host_vector<ContourSignalPointExt> smooth_signal(const thrust::host_vect
             start = end;
         }
         
-        thrust::device_vector<ContourSignalPoint> d_input = h_points;
+        //thrust::device_vector<ContourSignalPoint> d_input = h_points;
         thrust::device_vector<ContourSignalPointExt> d_output(num_points);
 
         thrust::device_vector<uint32_t> d_segment_length = h_segment_length;
@@ -82,6 +82,6 @@ thrust::host_vector<ContourSignalPointExt> smooth_signal(const thrust::host_vect
         );
 
 
-        thrust::host_vector<ContourSignalPointExt> h_smoothed = d_output;
-        return h_smoothed;
+        //thrust::host_vector<ContourSignalPointExt> h_smoothed = d_output;
+        return d_output;
     }

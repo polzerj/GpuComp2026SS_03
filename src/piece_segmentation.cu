@@ -106,7 +106,7 @@ __global__ void dilate(const brightness_t* input, brightness_t* output, int widt
 }
 
 
-void piece_segmentation(grayscale_image_t& image){
+uint8_t* piece_segmentation(grayscale_image_t& image){
     // allocate memory
     int num_pixels = image.height * image.width;
     size_t size = num_pixels * sizeof(brightness_t);
@@ -151,10 +151,11 @@ void piece_segmentation(grayscale_image_t& image){
     dilate<<<grid, block, shared_mem_bytes>>>(d_tmp, d_output, image.width, image.height, kernel_size);
 
     //Copy results back from GPU to CPU
-    cudaMemcpy(h_image, d_output, size, cudaMemcpyDeviceToHost);
+    //cudaMemcpy(h_image, d_output, size, cudaMemcpyDeviceToHost);
 
     // Cleanup
     cudaFree(d_input);
     cudaFree(d_tmp);
-    cudaFree(d_output);
+    //cudaFree(d_output);
+    return d_output;
 }

@@ -10,5 +10,5 @@ struct ContourSignalPointExt {
     uint32_t piece_length;
 };
 
-thrust::host_vector<ContourSignalPointExt> smooth_signal(const thrust::host_vector<ContourSignalPoint>& h_points, 
+thrust::device_vector<ContourSignalPointExt> smooth_signal(const thrust::host_vector<ContourSignalPoint>& h_points,  thrust::device_vector<ContourSignalPoint>& d_input,
     uint32_t smoothing_radius);
