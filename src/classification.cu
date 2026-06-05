@@ -1,4 +1,5 @@
 #include "classification.cuh"
+#include "timer.hpp"
 
 #include <cmath>
 #include <unordered_map>
@@ -7,17 +8,18 @@
 static uint32_t edge_length_between(
     uint32_t rank_a,
     uint32_t rank_b,
-    uint32_t piece_length
-) {
+    uint32_t piece_length)
+{
     return (rank_b + piece_length - rank_a) % piece_length;
 }
 
-static float cross2d(float ax, float ay, float bx, float by) {
+static float cross2d(float ax, float ay, float bx, float by)
+{
     return ax * by - ay * bx;
 }
 
 static char classify_single_edge(
-    const thrust::host_vector<ContourSignalPointExt>& points,
+    const thrust::host_vector<ContourSignalPointExt> &points,
     uint32_t piece_start,
     uint32_t piece_length,
     uint32_t corner_a_idx,
@@ -25,12 +27,12 @@ static char classify_single_edge(
     float center_x,
     float center_y,
     float edge_threshold,
-    float& mean_deviation_out
-) {
+    float &mean_deviation_out)
+{
     mean_deviation_out = 0.0f;
 
-    const auto& a = points[corner_a_idx];
-    const auto& b = points[corner_b_idx];
+    const auto &a = points[corner_a_idx];
+    const auto &b = points[corner_b_idx];
 
     uint32_t rank_a = a.rank;
     uint32_t rank_b = b.rank;
@@ -54,20 +56,22 @@ static char classify_single_edge(
     float center_sign = center_side > 0.0f ? 1.0f : -1.0f;
 
     uint32_t from = edge_len / 4;
-    uint32_t to   = (3 * edge_len) / 4;
+    uint32_t to = (3 * edge_len) / 4;
 
     float deviation_sum = 0.0f;
     uint32_t count = 0;
 
-    for (uint32_t d = from; d <= to; ++d) {
+    for (uint32_t d = from; d <= to; ++d)
+    {
         uint32_t rank = (rank_a + d) % piece_length;
         uint32_t idx = piece_start + rank;
 
-        if (idx >= points.size()) {
+        if (idx >= points.size())
+        {
             continue;
         }
 
-        const auto& p = points[idx];
+        const auto &p = points[idx];
 
         float px = static_cast<float>(p.x);
         float py = static_cast<float>(p.y);
@@ -82,18 +86,21 @@ static char classify_single_edge(
         count++;
     }
 
-    if (count == 0) {
+    if (count == 0)
+    {
         return 'L';
     }
 
     float mean_deviation = deviation_sum / static_cast<float>(count);
     mean_deviation_out = mean_deviation;
 
-    if (mean_deviation > edge_threshold) {
+    if (mean_deviation > edge_threshold)
+    {
         return 'V'; // knob / outward
     }
 
-    if (mean_deviation < -edge_threshold) {
+    if (mean_deviation < -edge_threshold)
+    {
         return 'C'; // hole / inward
     }
 
@@ -101,20 +108,22 @@ static char classify_single_edge(
 }
 
 thrust::host_vector<ClassifiedPiece> classify_edges(
-    const thrust::host_vector<ContourSignalPointExt>& h_smoothed,
-    const thrust::host_vector<PieceCorners>& corners,
-    const thrust::host_vector<Centroid>& centroids,
-    float edge_threshold
-) {
+    const thrust::host_vector<ContourSignalPointExt> &h_smoothed,
+    const thrust::host_vector<PieceCorners> &corners,
+    const thrust::host_vector<Centroid> &centroids,
+    float edge_threshold)
+{
     thrust::host_vector<ClassifiedPiece> result;
 
     std::unordered_map<uint32_t, std::pair<float, float>> centroid_by_label;
 
-    for (const auto& c : centroids) {
+    for (const auto &c : centroids)
+    {
         centroid_by_label[c.label] = {c.x, c.y};
     }
 
-    for (const auto& piece : corners) {
+    for (const auto &piece : corners)
+    {
         ClassifiedPiece classified;
         classified.label = piece.label;
         classified.valid = false;
@@ -124,14 +133,16 @@ thrust::host_vector<ClassifiedPiece> classify_edges(
 
         if (!piece.valid ||
             piece.point_indices.size() != 4 ||
-            piece.corner_ranks.size() != 4) {
+            piece.corner_ranks.size() != 4)
+        {
             result.push_back(classified);
             continue;
         }
 
         auto centroid_it = centroid_by_label.find(piece.label);
 
-        if (centroid_it == centroid_by_label.end()) {
+        if (centroid_it == centroid_by_label.end())
+        {
             result.push_back(classified);
             continue;
         }
@@ -141,7 +152,8 @@ thrust::host_vector<ClassifiedPiece> classify_edges(
 
         uint32_t first_corner_idx = piece.point_indices[0];
 
-        if (first_corner_idx >= h_smoothed.size()) {
+        if (first_corner_idx >= h_smoothed.size())
+        {
             result.push_back(classified);
             continue;
         }
@@ -150,14 +162,16 @@ thrust::host_vector<ClassifiedPiece> classify_edges(
 
         uint32_t piece_length = h_smoothed[first_corner_idx].piece_length;
 
-        if (piece_length == 0 || piece_start + piece_length > h_smoothed.size()) {
+        if (piece_length == 0 || piece_start + piece_length > h_smoothed.size())
+        {
             result.push_back(classified);
             continue;
         }
 
         bool ok = true;
 
-        for (uint32_t edge = 0; edge < 4; ++edge) {
+        for (uint32_t edge = 0; edge < 4; ++edge)
+        {
             uint32_t corner_a_idx = piece.point_indices[edge];
             uint32_t corner_b_idx = piece.point_indices[(edge + 1) % 4];
 
@@ -172,14 +186,14 @@ thrust::host_vector<ClassifiedPiece> classify_edges(
                 center_x,
                 center_y,
                 edge_threshold,
-                mean_deviation
-            );
+                mean_deviation);
 
             classified.edges[edge] = edge_label;
             classified.edge_deviations[edge] = mean_deviation;
 
             if (corner_a_idx >= h_smoothed.size() ||
-                corner_b_idx >= h_smoothed.size()) {
+                corner_b_idx >= h_smoothed.size())
+            {
                 ok = false;
             }
         }

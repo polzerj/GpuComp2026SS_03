@@ -18,6 +18,7 @@
 #include <cstdio>
 #include <cuda_runtime.h>
 
+#include "timer.hpp"
 #include "types.hpp"
 #include "preprocessing.cuh"
 // #include "preproccesing_old.cuh"
@@ -281,18 +282,18 @@ __global__ void helloFromDevice()
 
 int main()
 {
+    cudaSetDeviceFlags(cudaDeviceScheduleSpin);
+    GLOBAL_TIMER_START(full_execution);
+
+    DEBUG_TIMER_START(hello_from_device);
     helloFromDevice<<<2, 4>>>();
-    std::cout << "[Preprocessing] starting... " << std::endl;
-    auto preprocessing_time_start = std::chrono::high_resolution_clock::now();
+    cudaDeviceSynchronize();
+    DEBUG_TIMER_STOP(hello_from_device, "Hello from Device");
+
     uint8_t *d_binary_image = nullptr;
+    DEBUG_TIMER_START(preprocessing);
     rgb_image_t original_image = preprocessing("../data/1_p2.jpg", d_binary_image);
-    auto preprocessing_time_end = std::chrono::high_resolution_clock::now();
-
-    auto preprocessing_duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(preprocessing_time_end - preprocessing_time_start);
-
-    std::cout << "Preprocessing time: "
-              << preprocessing_duration_ms.count()
-              << " milliseconds\n\n";
+    DEBUG_TIMER_STOP(preprocessing, "Preprocessing");
 
     // save_gray_image(image, "debug_preprocessed.png");
 
@@ -307,18 +308,11 @@ int main()
     //------------------------------------------------------
     // PIECE SEGMENTATION
     //------------------------------------------------------
-    std::cout << "[Erosion/Dilation] starting... " << std::endl;
-    auto piece_segmentation_time_start = std::chrono::high_resolution_clock::now();
+    DEBUG_TIMER_START(piece_segmentation);
     uint8_t *piece_seg_out = piece_segmentation(d_binary_image, image_width, image_height, 5); // black-white enlargement
-    auto piece_segmentation_time_end = std::chrono::high_resolution_clock::now();
+    DEBUG_TIMER_STOP(piece_segmentation, "Piece Segmentation");
 
     cudaFree(d_binary_image); // not needed anymore, allocated in preprocessing and used in piece segmentation
-
-    std::cout << "[Erosion/Dilation] done " << std::endl;
-    auto piece_segmentation_duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(piece_segmentation_time_end - piece_segmentation_time_start);
-    std::cout << "Piece segmentation time: "
-              << piece_segmentation_duration_ms.count()
-              << " milliseconds\n\n";
 
     // cudaMemcpy(image.data.data(),piece_seg_out , image.width*image.height, cudaMemcpyDeviceToHost);
     // save_gray_image(image,"../data/processed/after_denoising.png");
@@ -326,16 +320,9 @@ int main()
     //------------------------------------------------------
     // CONNECTED COMPONENT LABELING
     //------------------------------------------------------
-    std::cout << "[CCL] starting... " << std::endl;
-    auto playne_time_start = std::chrono::high_resolution_clock::now();
+    DEBUG_TIMER_START(ccl);
     uint32_t *global_labels_d = playne_ccl(piece_seg_out, image_width, image_height);
-    auto playne_time_end = std::chrono::high_resolution_clock::now();
-
-    std::cout << "[CCL] done" << std::endl;
-    auto playne_duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(playne_time_end - playne_time_start);
-    std::cout << "Playne time: "
-              << playne_duration_ms.count()
-              << " milliseconds\n\n";
+    DEBUG_TIMER_STOP(ccl, "CCL");
 
     // grayscale_image_t& grayImage_cleaned = image;
     //  uint32_t  *global_labels_host = (uint32_t*)malloc(grayImage_cleaned.width* grayImage_cleaned.height * sizeof(unsigned int));
@@ -348,17 +335,9 @@ int main()
     //------------------------------------------------------
     // POINTER JUMPING
     //------------------------------------------------------
-    std::cout << "[Pointer jumping] starting... " << std::endl;
-    auto pointer_jumping_time_start = std::chrono::high_resolution_clock::now();
+    DEBUG_TIMER_START(pointer_jumping);
     ptr_jmp_out_t out_d = pointer_jumping(global_labels_d, image_width, image_height);
-    auto pointer_jumping_time_end = std::chrono::high_resolution_clock::now();
-
-    std::cout << "[Pointer jumping] done" << std::endl;
-    auto pointer_jumping_duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(pointer_jumping_time_end - pointer_jumping_time_start);
-
-    std::cout << "Pointer jumping time: "
-              << pointer_jumping_duration_ms.count()
-              << " milliseconds\n\n";
+    DEBUG_TIMER_STOP(pointer_jumping, "Pointer Jumping");
 
     // ptr_jmp_out_t arrays;
     // arrays.boundaries = (uint32_t*)malloc(pixel_count * sizeof(unsigned int));
@@ -382,27 +361,18 @@ int main()
     //------------------------------------------------------
     // CENTROID CALUCLATION
     //------------------------------------------------------
-    auto centroid_time_start = std::chrono::high_resolution_clock::now();
+    DEBUG_TIMER_START(centroid);
     thrust::device_vector<Centroid> d_centroids = compute_centroids(out_d.boundaries, image_width, image_height);
-    auto centroid_duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - centroid_time_start);
-
-    std::cout << "Centroid time: "
-              << centroid_duration_ms.count()
-              << " milliseconds\n\n";
+    DEBUG_TIMER_STOP(centroid, "Centroid Calculation");
 
     thrust::host_vector<Centroid> centroids = d_centroids; // we need this for classification
 
     //------------------------------------------------------
     // SORTING SIGNALS
     //------------------------------------------------------
-    auto sort_time_start = std::chrono::high_resolution_clock::now();
+    DEBUG_TIMER_START(sorting);
     thrust::device_vector<ContourSignalPoint> d_points = sort_distances(out_d.boundaries, out_d.ranks, d_centroids, image_width, image_height);
-
-    auto sort_duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - sort_time_start);
-
-    std::cout << "Sort time: "
-              << sort_duration_ms.count()
-              << " milliseconds\n\n";
+    DEBUG_TIMER_STOP(sorting, "Sorting Signals");
 
     // for (size_t i = 0; i < std::min<size_t>(h_points.size(), 100); ++i) {
     //     const auto& p = h_points[i];
@@ -429,30 +399,27 @@ int main()
     //------------------------------------------------------
     auto smoothing_time_start = std::chrono::high_resolution_clock::now();
     uint32_t smoothing_radius = 4; // magic value -- if increased too much corners are hard to detect
+    DEBUG_TIMER_START(smoothing);
     thrust::device_vector<ContourSignalPointExt> d_smoothed = smooth_signal(h_points, d_points, smoothing_radius);
-    auto smoothing_duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - smoothing_time_start);
-    std::cout << "Smoothing time: "
-              << smoothing_duration_ms.count()
-              << " milliseconds\n\n";
+    DEBUG_TIMER_STOP(smoothing, "Smoothing Signals");
 
+    DEBUG_TIMER_START(save_contour_signal);
     thrust::host_vector<ContourSignalPointExt> h_smoothed = d_smoothed; // this one is necessary for the steps after
     save_contour_signal_csv(h_smoothed, "../data/processed/contour_signal_smoothed.csv");
+    DEBUG_TIMER_STOP(save_contour_signal, "Saving Smoothed Contour Signal");
 
     //------------------------------------------------------
     //  CORNER DETECTION
     //------------------------------------------------------
-    auto corner_detection_start = std::chrono::high_resolution_clock::now();
+    DEBUG_TIMER_START(corner_detection);
     uint32_t peak_detection_radius = 100; // magic value -- lower makes it detect incorrect corners
     float prominece_threshold = 10.0f;    // magic value
     uint32_t distance_threshold = 0;
 
     thrust::host_vector<PieceCorners> h_corners = detect_corners(h_smoothed, d_smoothed, peak_detection_radius, prominece_threshold, distance_threshold);
+    DEBUG_TIMER_STOP(corner_detection, "Corner Detection");
 
-    auto corner_det_time_us = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - corner_detection_start);
-    std::cout << "Corner detection time: "
-              << corner_det_time_us.count()
-              << " microseconds\n\n";
-
+    DEBUG_TIMER_START(corner_validation);
     auto piece_id = 0;
     auto invalid_count = 0;
     // std::cout << "Invalid Pieces: \n";
@@ -473,6 +440,7 @@ int main()
     // save_contour_signal_csv(h_smoothed, "../data/processed/contour_signal_smoothed_cornered.csv");
 
     std::cout << "Found " << h_corners.size() - invalid_count << " valid pieces \n\n";
+    DEBUG_TIMER_STOP(corner_validation, "Corner Validation");
 
     // grayscale_image_t grayImage_cleaned = image;
     // grayscale_image_t corner_debug = visualize_corners(grayImage_cleaned, h_smoothed, h_corners);
@@ -482,13 +450,10 @@ int main()
     //------------------------------------------------------
     //  CLASSIFICATION
     //------------------------------------------------------
-    auto classification_start = std::chrono::high_resolution_clock::now();
+    DEBUG_TIMER_START(classification);
     float edge_threshold = 4.0f;
     thrust::host_vector<ClassifiedPiece> classified = classify_edges(h_smoothed, h_corners, centroids, edge_threshold);
-    auto classification_time_ms = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - classification_start);
-    std::cout << "Classification time: "
-              << classification_time_ms.count()
-              << " microseconds\n\n";
+    DEBUG_TIMER_STOP(classification, "Classification");
 
     // for (const auto& p : classified) {
     //     if (!p.valid) {
@@ -512,19 +477,15 @@ int main()
     //     std::cout << "]\n";
     // }
 
-    auto visualize_start = std::chrono::high_resolution_clock::now();
+    DEBUG_TIMER_START(visualization);
     visualizer(original_image, d_smoothed, h_smoothed, h_corners, classified);
-    auto visualization_time_us = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - visualize_start);
-    std::cout << "Visualization time: "
-              << visualization_time_us.count()
-              << " milliseconds\n\n";
+    DEBUG_TIMER_STOP(visualization, "Visualization");
 
-    auto save_start = std::chrono::high_resolution_clock::now();
+    DEBUG_TIMER_START(saving);
     save_rgb_image(original_image, "../data/processed/classified_edges.jpg");
-    auto save_time_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - save_start);
-    std::cout << "Saving time: "
-              << save_time_ms.count()
-              << " milliseconds\n\n";
+    DEBUG_TIMER_STOP(saving, "Saving Output Image");
+
+    GLOBAL_TIMER_STOP(full_execution, "Full Execution");
 
     return 0;
 }

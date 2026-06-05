@@ -1,6 +1,7 @@
 #include <cstdio>
 #include <cuda_runtime.h>
 #include "types.hpp"
+#include "timer.hpp"
 
 __global__ void erode(const brightness_t *input, brightness_t *output, int width, int height, size_t kernel_size)
 {
@@ -125,7 +126,9 @@ uint8_t *piece_segmentation(const brightness_t *d_input, int width, int height, 
     size_t shared_mem_bytes = (block.x + 2 * radius) * (block.y + 2 * radius) * sizeof(brightness_t);
 
     // Morphological open
+    DETAILED_TIMER_START(erode);
     erode<<<grid, block, shared_mem_bytes>>>(d_input, d_tmp, width, height, kernel_size);
+    DETAILED_TIMER_STOP(erode, "erode");
     // cudaError_t err = cudaGetLastError();
     // if(err != cudaSuccess){
     //     printf("Erode kernel launch failed: %s\n", cudaGetErrorString(err));
@@ -145,7 +148,9 @@ uint8_t *piece_segmentation(const brightness_t *d_input, int width, int height, 
     //  if(err != cudaSuccess){
     //      printf("Runtime error: %s\n", cudaGetErrorString(err));
     //  }
+    DETAILED_TIMER_START(dilate);
     dilate<<<grid, block, shared_mem_bytes>>>(d_tmp, d_output, width, height, kernel_size);
+    DETAILED_TIMER_STOP(dilate, "dilate");
 
     // Copy results back from GPU to CPU
     // cudaMemcpy(h_image, d_output, size, cudaMemcpyDeviceToHost);

@@ -8,6 +8,7 @@
 #include <thrust/scan.h>
 
 #include "types.hpp"
+#include "timer.hpp"
 
 #include "stb_image.h"
 #include "preprocessing.cuh"
@@ -44,34 +45,6 @@ static void cudaCheck(cudaError_t err, const char *file, int line)
 
 // ── timer ───
 // Enable with make debug for kernel timings
-
-#ifdef PREPROC_TIMING
-struct stage_timer_t
-{
-    cudaEvent_t start, stop;
-    stage_timer_t()
-    {
-        cudaEventCreate(&start);
-        cudaEventCreate(&stop);
-        cudaEventRecord(start); // insert start marker in default stream
-    }
-    float elapsed_ms()
-    {
-        cudaEventRecord(stop);      // insert stop marker
-        cudaEventSynchronize(stop); // wait for GPU to reach stop
-        float ms = 0.0f;
-        cudaEventElapsedTime(&ms, start, stop);
-        cudaEventDestroy(start);
-        cudaEventDestroy(stop);
-        return ms;
-    }
-};
-#define TIMER_START(name) stage_timer_t _timer_##name
-#define TIMER_STOP(name, label) printf("[timing] %-30s %7.3f ms\n", label, _timer_##name.elapsed_ms())
-#else
-#define TIMER_START(name)
-#define TIMER_STOP(name, label)
-#endif // PREPROC_TIMING
 
 struct pipeline_t
 {
@@ -397,11 +370,11 @@ static void nvjpeg_decode(const std::vector<uint8_t> &jpeg, pipeline_t &pipe, in
     img.channel[0] = reinterpret_cast<uint8_t *>(pipe.d_rgb);
     img.pitch[0] = W * 3;
 
-    TIMER_START(nvjpegdecode);
+    DETAILED_TIMER_START(nvjpegdecode);
     CUDA_CHECK((cudaError_t)nvjpegDecode(handle, state, jpeg.data(), jpeg.size(),
                                          NVJPEG_OUTPUT_RGBI, &img, 0));
     CUDA_CHECK(cudaDeviceSynchronize());
-    TIMER_STOP(nvjpegdecode, "nvJPEG decode");
+    DETAILED_TIMER_STOP(nvjpegdecode, "nvJPEG decode");
 
     nvjpegJpegStateDestroy(state);
     nvjpegDestroy(handle);
@@ -440,27 +413,27 @@ static void download_rgb_result(const pipeline_t &p, rgb_image_t &out)
 
 rgb_image_t preprocessing(const std::string &imagePath, uint8_t *&d_result)
 {
-    TIMER_START(imageread);
+    DETAILED_TIMER_START(imageread);
     int W, H;
     auto jpeg = read_file(imagePath);
     pipeline_t pipe{};
     nvjpeg_decode(jpeg, pipe, W, H);
-    TIMER_STOP(imageread, "image read + decode");
+    DETAILED_TIMER_STOP(imageread, "image read + decode");
     printf("[image] %s - %d x %d\n", imagePath.c_str(), W, H);
 
     dim3 block(BLOCK_X, BLOCK_Y);
     dim3 grid((W + block.x - 1) / block.x, (H + block.y - 1) / block.y);
 
     //  RGB → luma
-    TIMER_START(total);
-    TIMER_START(luma);
+    DETAILED_TIMER_START(total);
+    DETAILED_TIMER_START(luma);
     rgba_to_luma_kernel<<<grid, block>>>(pipe.d_rgb, pipe.d_gray, W, H);
-    TIMER_STOP(luma, "rgba_to_luma");
+    DETAILED_TIMER_STOP(luma, "rgba_to_luma");
 
-    TIMER_START(download_rgb);
+    DETAILED_TIMER_START(download_rgb);
     rgb_image_t input_rgb;
     download_rgb_result(pipe, input_rgb);
-    TIMER_STOP(download_rgb, "download RGB result");
+    DETAILED_TIMER_STOP(download_rgb, "download RGB result");
 
     cudaFree(pipe.d_rgb);
     pipe.d_rgb = nullptr;
@@ -471,9 +444,9 @@ rgb_image_t preprocessing(const std::string &imagePath, uint8_t *&d_result)
     const int rows_gauss = block.y + 2 * radius;
     size_t smem_gauss = (size_t)rows_gauss * (block.x + 2 * radius + block.x) * sizeof(float);
 
-    TIMER_START(gauss);
+    DETAILED_TIMER_START(gauss);
     gaussian_fused<<<grid, block, smem_gauss>>>(pipe.d_gray, pipe.d_gray, W, H, radius);
-    TIMER_STOP(gauss, "gaussian_fused");
+    DETAILED_TIMER_STOP(gauss, "gaussian_fused");
 
     // Otsu threshold
     const int num_pixels = W * H;
@@ -484,13 +457,13 @@ rgb_image_t preprocessing(const std::string &imagePath, uint8_t *&d_result)
     CUDA_CHECK(cudaMalloc(&d_threshold, sizeof(float)));
     CUDA_CHECK(cudaMemset(d_hist, 0, HIST_BINS * sizeof(int)));
 
-    TIMER_START(hist);
+    DETAILED_TIMER_START(hist);
     histogram_kernel<<<(num_pixels / 4 + HIST_BLOCK - 1) / HIST_BLOCK, HIST_BLOCK>>>(pipe.d_gray, d_hist, num_pixels);
-    TIMER_STOP(hist, "histogram");
+    DETAILED_TIMER_STOP(hist, "histogram");
 
-    TIMER_START(otsu);
+    DETAILED_TIMER_START(otsu);
     otsu_kernel<<<1, HIST_BINS>>>(d_hist, num_pixels, d_threshold);
-    TIMER_STOP(otsu, "otsu_gpu");
+    DETAILED_TIMER_STOP(otsu, "otsu_gpu");
     cudaFree(d_hist);
 
     float h_threshold;
@@ -498,21 +471,21 @@ rgb_image_t preprocessing(const std::string &imagePath, uint8_t *&d_result)
     cudaFree(d_threshold);
 
 #ifdef PREPROC_TIMING
-    printf("[timing] Otsu threshold = %.1f\n", h_threshold);
+    printf("[preprocessing] Otsu threshold = %.1f\n", h_threshold);
 #endif
 
     dim3 thresh_grid((W / 4 + block.x - 1) / block.x, grid.y);
-    TIMER_START(thresh);
+    DETAILED_TIMER_START(thresh);
     apply_threshold_kernel<<<thresh_grid, block>>>(pipe.d_gray, pipe.d_binary, W, H, h_threshold);
-    TIMER_STOP(thresh, "apply_threshold");
+    DETAILED_TIMER_STOP(thresh, "apply_threshold");
 
-    TIMER_STOP(total, "── total without transfers");
+    DETAILED_TIMER_STOP(total, "preprocessing without transfers");
     // save_uint8_stage(pipe.d_binary, W, H, "data/processed//main/debug_3_binary.png"); // final stage 1 output
 
-    // TIMER_START(download);
+    // DETAILED_TIMER_START(download);
     // grayscale_image_t result;
     // download_result(pipe, result);
-    // TIMER_STOP(download, "download result");
+    // DETAILED_TIMER_STOP(download, "download result");
     free_pipeline(pipe, true, true, false); // keep binary for further processing in main
     d_result = pipe.d_binary;
 

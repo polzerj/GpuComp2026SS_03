@@ -11,21 +11,26 @@
 #include <thrust/copy.h>
 #include <thrust/sort.h>
 
-struct IsBoundary {
-    __device__ bool operator()(uint32_t label) const {
+#include "timer.hpp"
+
+struct IsBoundary
+{
+    __device__ bool operator()(uint32_t label) const
+    {
         return label != 0;
     }
 };
 
 __global__ void scatter_centroids_by_label(
-    const Centroid* centroids,
+    const Centroid *centroids,
     uint32_t num_centroids,
-    float* center_x,
-    float* center_y
-) {
+    float *center_x,
+    float *center_y)
+{
     uint32_t i = blockIdx.x * blockDim.x + threadIdx.x;
 
-    if (i >= num_centroids) {
+    if (i >= num_centroids)
+    {
         return;
     }
 
@@ -35,19 +40,20 @@ __global__ void scatter_centroids_by_label(
 }
 
 __global__ void make_signal_keys_and_values(
-    const uint32_t* boundary_ids,
-    const uint32_t* boundaries,
-    const uint32_t* ranks,
-    const float* center_x,
-    const float* center_y,
-    uint64_t* keys,
-    ContourSignalPoint* points,
+    const uint32_t *boundary_ids,
+    const uint32_t *boundaries,
+    const uint32_t *ranks,
+    const float *center_x,
+    const float *center_y,
+    uint64_t *keys,
+    ContourSignalPoint *points,
     uint32_t width,
-    uint32_t num_boundary
-) {
+    uint32_t num_boundary)
+{
     uint32_t i = blockIdx.x * blockDim.x + threadIdx.x;
 
-    if (i >= num_boundary) {
+    if (i >= num_boundary)
+    {
         return;
     }
 
@@ -59,8 +65,8 @@ __global__ void make_signal_keys_and_values(
     uint32_t x = pixel_id % width;
     uint32_t y = pixel_id / width;
 
-    float dx = (x*1.0) - center_x[label];
-    float dy = (y*1.0) - center_y[label];
+    float dx = (x * 1.0) - center_x[label];
+    float dy = (y * 1.0) - center_y[label];
 
     float dist = sqrtf(dx * dx + dy * dy);
 
@@ -76,54 +82,56 @@ __global__ void make_signal_keys_and_values(
     points[i] = p;
 }
 
-__global__ void filter_boundaries( const uint32_t* boundaries_in, uint32_t* boundaries_out, uint32_t pixel_count,
-    const float* center_x, const float* center_y){
+__global__ void filter_boundaries(const uint32_t *boundaries_in, uint32_t *boundaries_out, uint32_t pixel_count,
+                                  const float *center_x, const float *center_y)
+{
 
     uint32_t i = blockIdx.x * blockDim.x + threadIdx.x;
 
-    if (i >= pixel_count) {
+    if (i >= pixel_count)
+    {
         return;
     }
     uint32_t label = boundaries_in[i];
 
-    boundaries_out[i] = (center_x[label]== -1.0f && center_y[label] == -1.0f) ? 0 : label;
-    
+    boundaries_out[i] = (center_x[label] == -1.0f && center_y[label] == -1.0f) ? 0 : label;
 }
 
-
 thrust::device_vector<ContourSignalPoint> sort_distances(
-    const uint32_t* d_boundaries,
-    const uint32_t* d_ranks,
-    const thrust::device_vector<Centroid>& d_centroids,
+    const uint32_t *d_boundaries,
+    const uint32_t *d_ranks,
+    const thrust::device_vector<Centroid> &d_centroids,
     uint32_t width,
-    uint32_t height
-) {
+    uint32_t height)
+{
     uint32_t pixel_count = width * height;
-    
-    if (pixel_count == 0 || d_centroids.empty()) {
+
+    if (pixel_count == 0 || d_centroids.empty())
+    {
         return thrust::host_vector<ContourSignalPoint>();
     }
-    
+
     // thrust::device_vector<uint32_t> d_boundaries(h_boundaries, h_boundaries + pixel_count);
     // thrust::device_vector<uint32_t> d_ranks(h_ranks, h_ranks + pixel_count);
 
-    //thrust::device_ptr<uint32_t> d_labels = thrust::device_pointer_cast(d_boundaries);
+    // thrust::device_ptr<uint32_t> d_labels = thrust::device_pointer_cast(d_boundaries);
     ///////thrust::device_ptr<uint32_t> d_labels = thrust::device_pointer_cast(d_ranks);
-    
-    
+
     // ---------------------------------------------------------------------
     //    Build sparse centroid lookup arrays:
     //    center_x[label], center_y[label]
     // ---------------------------------------------------------------------
 
-    //thrust::device_vector<Centroid> d_centroids = h_centroids;
+    // thrust::device_vector<Centroid> d_centroids = h_centroids;
+
+    DETAILED_TIMER_START(scatter_centroids);
     uint32_t max_label = pixel_count;
-    //uint32_t max_label = 0;
-    // this can be made parallel or left out but that increases memory usage
-    // for(const auto& c : d_centroids) {
-    //     if(c.label > max_label) max_label = c.label;
-    // }
-    // if left out this needs to take pixel_count instead of max_label + 1
+    // uint32_t max_label = 0;
+    //  this can be made parallel or left out but that increases memory usage
+    //  for(const auto& c : d_centroids) {
+    //      if(c.label > max_label) max_label = c.label;
+    //  }
+    //  if left out this needs to take pixel_count instead of max_label + 1
     thrust::device_vector<float> d_center_x(pixel_count, -1.0f);
     thrust::device_vector<float> d_center_y(pixel_count, -1.0f);
 
@@ -134,27 +142,32 @@ thrust::device_vector<ContourSignalPoint> sort_distances(
         thrust::raw_pointer_cast(d_centroids.data()),
         static_cast<uint32_t>(d_centroids.size()),
         thrust::raw_pointer_cast(d_center_x.data()),
-        thrust::raw_pointer_cast(d_center_y.data())
-    );
+        thrust::raw_pointer_cast(d_center_y.data()));
 
-    
+    cudaDeviceSynchronize();
+    DETAILED_TIMER_STOP(scatter_centroids, "Scatter centroids by label");
+
     // ---------------------------------------------------------------------
     // Filter out small blobs and noise
     // ---------------------------------------------------------------------
+    DETAILED_TIMER_START(filter_boundaries);
     uint32_t filter_blocks = (pixel_count + threads - 1) / threads;
-    uint32_t * d_boundaries_out;
+    uint32_t *d_boundaries_out;
     cudaMalloc(&d_boundaries_out, pixel_count * sizeof(uint32_t));
 
-    filter_boundaries<<<filter_blocks, threads>>> (d_boundaries, 
-        d_boundaries_out, pixel_count,
-        thrust::raw_pointer_cast(d_center_x.data()),
-        thrust::raw_pointer_cast(d_center_y.data()));
-    
+    filter_boundaries<<<filter_blocks, threads>>>(d_boundaries,
+                                                  d_boundaries_out, pixel_count,
+                                                  thrust::raw_pointer_cast(d_center_x.data()),
+                                                  thrust::raw_pointer_cast(d_center_y.data()));
+
+    cudaDeviceSynchronize();
+    DETAILED_TIMER_STOP(filter_boundaries, "Filter boundaries");
 
     // ---------------------------------------------------------------------
     // Compact boundary pixel IDs
     // ---------------------------------------------------------------------
 
+    DETAILED_TIMER_START(compact_boundaries);
     thrust::device_vector<uint32_t> d_all_ids(pixel_count);
     thrust::sequence(d_all_ids.begin(), d_all_ids.end());
 
@@ -166,23 +179,24 @@ thrust::device_vector<ContourSignalPoint> sort_distances(
         d_all_ids.end(),
         wrapped_out,
         d_boundary_ids.begin(),
-        IsBoundary()
-    );  // copy_if returns an iterator pointing to the end of the copied sequence
+        IsBoundary()); // copy_if returns an iterator pointing to the end of the copied sequence
 
-    uint32_t num_boundary = static_cast<uint32_t>(boundary_end - d_boundary_ids.begin()); 
+    uint32_t num_boundary = static_cast<uint32_t>(boundary_end - d_boundary_ids.begin());
 
     d_boundary_ids.resize(num_boundary);
+    DETAILED_TIMER_STOP(compact_boundaries, "Compact boundary pixel IDs");
 
-    if (num_boundary == 0) {
+    if (num_boundary == 0)
+    {
         return thrust::host_vector<ContourSignalPoint>();
     }
-
 
     // ---------------------------------------------------------------------
     //    Create packed sort keys and signal values
     //    key = (label << 32) | rank
     // ---------------------------------------------------------------------
 
+    DETAILED_TIMER_START(sort_keys_and_values);
     thrust::device_vector<uint64_t> d_keys(num_boundary);
     thrust::device_vector<ContourSignalPoint> d_points(num_boundary);
 
@@ -197,18 +211,17 @@ thrust::device_vector<ContourSignalPoint> sort_distances(
         thrust::raw_pointer_cast(d_keys.data()),
         thrust::raw_pointer_cast(d_points.data()),
         width,
-        num_boundary
-    );
+        num_boundary);
 
     cudaFree(d_boundaries_out);
 
     thrust::sort_by_key(
         d_keys.begin(),
         d_keys.end(),
-        d_points.begin()
-    );
+        d_points.begin());
 
-    //thrust::host_vector<ContourSignalPoint> h_points = d_points;
-    
+    // thrust::host_vector<ContourSignalPoint> h_points = d_points;
+
+    DETAILED_TIMER_STOP(sort_keys_and_values, "Sort keys and values");
     return d_points;
 }
