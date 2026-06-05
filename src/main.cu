@@ -258,8 +258,7 @@ int main()
               << " milliseconds\n\n";
 
     save_gray_image(image, "debug_preprocessed.png");
-
-    image = convert_image(read_image("../data/processed/binarymultiple.png"));
+    image = convert_image(read_image("debug_preprocessed.png"));
 
     std::cout << "Image loaded and converted to grayscale with size " << image.width << "x" << image.height << "." << std::endl;
 
