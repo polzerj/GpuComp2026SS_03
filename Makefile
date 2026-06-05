@@ -24,7 +24,7 @@ $(EXECUTABLE): $(OBJ_FILES) | $(BUILD_DIR)
 	$(NVCC) $(NVCC_FLAGS) --compiler-options "$(COMPILER_OPTIONS)" $(OBJ_FILES) -o $@ $(LIBS)
 
 run: $(EXECUTABLE)
-	@./$(EXECUTABLE)
+	@./$(EXECUTABLE)  $(IMG)
 
 run_all: $(EXECUTABLE)
 	@./$(EXECUTABLE) $(IMAGES_DIR)/*.jpg
