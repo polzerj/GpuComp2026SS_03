@@ -280,10 +280,26 @@ __global__ void helloFromDevice()
     return;
 }
 
-int main()
+int main(int argc, char *argv[])
 {
     cudaSetDeviceFlags(cudaDeviceScheduleSpin);
     GLOBAL_TIMER_START(full_execution);
+
+    std::string image_path = "../data/1_p2.jpg";
+    if (argc == 2)
+    {
+        std::cout << "Using provided image path: " << argv[1] << "\n";
+        image_path = argv[1];
+    }
+    else if (argc > 2)
+    {
+        std::cerr << "Usage: " << argv[0] << " [image_path]\n";
+        return 1;
+    }
+    else
+    {
+        std::cout << "No image path provided, using default: " << image_path << "\n";
+    }
 
     DEBUG_TIMER_START(hello_from_device);
     helloFromDevice<<<2, 4>>>();
@@ -292,7 +308,7 @@ int main()
 
     uint8_t *d_binary_image = nullptr;
     DEBUG_TIMER_START(preprocessing);
-    rgb_image_t original_image = preprocessing("../data/1_p2.jpg", d_binary_image);
+    rgb_image_t original_image = preprocessing(image_path, d_binary_image);
     DEBUG_TIMER_STOP(preprocessing, "Preprocessing");
 
     // save_gray_image(image, "debug_preprocessed.png");
@@ -482,7 +498,10 @@ int main()
     DEBUG_TIMER_STOP(visualization, "Visualization");
 
     DEBUG_TIMER_START(saving);
-    save_rgb_image(original_image, "../data/processed/classified_edges.jpg");
+    image_path.erase(image_path.find_last_of('.'));        // remove extension
+    image_path.erase(0, image_path.find_last_of('/') + 1); // remove directories
+    std::string output_path = "../data/processed/" + image_path + "_classified.jpg";
+    save_rgb_image(original_image, output_path);
     DEBUG_TIMER_STOP(saving, "Saving Output Image");
 
     GLOBAL_TIMER_STOP(full_execution, "Full Execution");
