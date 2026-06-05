@@ -2,7 +2,8 @@
 #include <cuda_runtime.h>
 #include "types.hpp"
 
-__global__ void erode(const brightness_t* input, brightness_t* output, int width, int height, size_t kernel_size){
+__global__ void erode(const brightness_t *input, brightness_t *output, int width, int height, size_t kernel_size)
+{
     extern __shared__ brightness_t tile[];
     int radius = kernel_size / 2;
     int tile_width = blockDim.x + 2 * radius;
@@ -25,18 +26,19 @@ __global__ void erode(const brightness_t* input, brightness_t* output, int width
 
         brightness_t value = 0;
 
-        if(global_x >= 0 && global_x < width && global_y >= 0 && global_y < height){
+        if (global_x >= 0 && global_x < width && global_y >= 0 && global_y < height)
+        {
             value = input[global_y * width + global_x];
         }
 
         tile[local_y * tile_width + local_x] = value;
     }
-    
+
     __syncthreads();
-    if(x >= width || y >= height){ // rectangle of threads started is slightly bigger than image
+    if (x >= width || y >= height)
+    { // rectangle of threads started is slightly bigger than image
         return;
     }
-
 
     bool keep_white = true;
 
@@ -44,18 +46,19 @@ __global__ void erode(const brightness_t* input, brightness_t* output, int width
     {
         for (int dx = -radius; dx <= radius; dx++)
         {
-           brightness_t value = tile[(threadIdx.y + radius + dy)*tile_width + (threadIdx.x + radius + dx)];
-           if (value != 255)
-           {
-            keep_white = false;
-           }
-        }  
+            brightness_t value = tile[(threadIdx.y + radius + dy) * tile_width + (threadIdx.x + radius + dx)];
+            if (value != 255)
+            {
+                keep_white = false;
+            }
+        }
     }
-    
+
     output[x + width * y] = keep_white ? 255 : 0;
 }
 
-__global__ void dilate(const brightness_t* input, brightness_t* output, int width, int height, size_t kernel_size){
+__global__ void dilate(const brightness_t *input, brightness_t *output, int width, int height, size_t kernel_size)
+{
     extern __shared__ brightness_t tile[];
     int radius = kernel_size / 2;
     int tile_width = blockDim.x + 2 * radius;
@@ -82,9 +85,10 @@ __global__ void dilate(const brightness_t* input, brightness_t* output, int widt
         }
         tile[local_y * tile_width + local_x] = value;
     }
-    
+
     __syncthreads();
-    if(x >= width || y >= height){ // rectangle of threads started is slightly bigger than image
+    if (x >= width || y >= height)
+    { // rectangle of threads started is slightly bigger than image
         return;
     }
 
@@ -99,35 +103,29 @@ __global__ void dilate(const brightness_t* input, brightness_t* output, int widt
             {
                 make_white = true;
             }
-                         
         }
     }
     output[x + width * y] = make_white ? 255 : 0;
 }
 
-
-uint8_t* piece_segmentation(grayscale_image_t& image){
+uint8_t *piece_segmentation(const brightness_t *d_input, int width, int height, size_t kernel_size)
+{
     // allocate memory
-    int num_pixels = image.height * image.width;
+    int num_pixels = height * width;
     size_t size = num_pixels * sizeof(brightness_t);
-    size_t kernel_size = 5;
 
-    brightness_t* h_image = image.data.data();
-    brightness_t* d_input;
-    brightness_t* d_tmp;
-    brightness_t* d_output;
-    cudaMalloc(&d_input, size);
+    brightness_t *d_tmp;
+    brightness_t *d_output;
     cudaMalloc(&d_tmp, size);
     cudaMalloc(&d_output, size);
-    cudaMemcpy(d_input, h_image, size, cudaMemcpyHostToDevice);
 
-    dim3 block(16,16);
-    dim3 grid((image.width + block.x - 1) / block.x , (image.height + block.y - 1) / block.y);
+    dim3 block(16, 16);
+    dim3 grid((width + block.x - 1) / block.x, (height + block.y - 1) / block.y);
     size_t radius = kernel_size / 2;
-    size_t shared_mem_bytes = (block.x + 2 * radius)*(block.y + 2 * radius)*sizeof(brightness_t);
+    size_t shared_mem_bytes = (block.x + 2 * radius) * (block.y + 2 * radius) * sizeof(brightness_t);
 
     // Morphological open
-    erode<<<grid,block, shared_mem_bytes>>>(d_input, d_tmp, image.width, image.height, kernel_size);
+    erode<<<grid, block, shared_mem_bytes>>>(d_input, d_tmp, width, height, kernel_size);
     // cudaError_t err = cudaGetLastError();
     // if(err != cudaSuccess){
     //     printf("Erode kernel launch failed: %s\n", cudaGetErrorString(err));
@@ -136,26 +134,24 @@ uint8_t* piece_segmentation(grayscale_image_t& image){
     // if(err != cudaSuccess){
     //     printf("Runtime error: %s\n", cudaGetErrorString(err));
     // }
-    //erode<<<grid,block, shared_mem_bytes>>>(d_tmp, d_output, image.width, image.height, kernel_size);
+    // erode<<<grid,block, shared_mem_bytes>>>(d_tmp, d_output, image.width, image.height, kernel_size);
 
+    // dilate<<<grid, block, shared_mem_bytes>>>(d_output, d_tmp, image.width, image.height, kernel_size);
+    //  err = cudaGetLastError();
+    //  if(err != cudaSuccess){
+    //      printf("Dilate kernel launch failed: %s\n", cudaGetErrorString(err));
+    //  }
+    //  err = cudaDeviceSynchronize();
+    //  if(err != cudaSuccess){
+    //      printf("Runtime error: %s\n", cudaGetErrorString(err));
+    //  }
+    dilate<<<grid, block, shared_mem_bytes>>>(d_tmp, d_output, width, height, kernel_size);
 
-    //dilate<<<grid, block, shared_mem_bytes>>>(d_output, d_tmp, image.width, image.height, kernel_size);
-    // err = cudaGetLastError();
-    // if(err != cudaSuccess){
-    //     printf("Dilate kernel launch failed: %s\n", cudaGetErrorString(err));
-    // }
-    // err = cudaDeviceSynchronize();
-    // if(err != cudaSuccess){
-    //     printf("Runtime error: %s\n", cudaGetErrorString(err));
-    // }
-    dilate<<<grid, block, shared_mem_bytes>>>(d_tmp, d_output, image.width, image.height, kernel_size);
-
-    //Copy results back from GPU to CPU
-    //cudaMemcpy(h_image, d_output, size, cudaMemcpyDeviceToHost);
+    // Copy results back from GPU to CPU
+    // cudaMemcpy(h_image, d_output, size, cudaMemcpyDeviceToHost);
 
     // Cleanup
-    cudaFree(d_input);
     cudaFree(d_tmp);
-    //cudaFree(d_output);
+    // cudaFree(d_output);
     return d_output;
 }

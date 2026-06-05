@@ -2,6 +2,7 @@ NVCC := nvcc
 NVCC_FLAGS += -O3 --extended-lambda
 COMPILER_OPTIONS += -Wall -Wextra 
 INCLUDES += -Iinclude
+LIBS += -lnvjpeg
 
 SRC_DIR := src
 BUILD_DIR := build
@@ -19,7 +20,7 @@ $(BUILD_DIR)/%.o: $(SRC_DIR)/%.cu | $(BUILD_DIR)
 	$(NVCC) $(NVCC_FLAGS) --compiler-options "$(COMPILER_OPTIONS)" $(INCLUDES) -c $< -o $@
 
 $(EXECUTABLE): $(OBJ_FILES) | $(BUILD_DIR)
-	$(NVCC) $(NVCC_FLAGS) --compiler-options "$(COMPILER_OPTIONS)" $(OBJ_FILES) -o $@
+	$(NVCC) $(NVCC_FLAGS) --compiler-options "$(COMPILER_OPTIONS)" $(OBJ_FILES) -o $@ $(LIBS)
 
 run: $(EXECUTABLE)
 	@./$(EXECUTABLE)

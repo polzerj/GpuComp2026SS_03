@@ -4,6 +4,11 @@
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image_write.h"
 
+// define which formats to export
+#define EXPORT_AS_PNG (0)
+#define EXPORT_AS_JPG (1)
+#define EXPORT_AS_BMP (0)
+
 #include <string>
 #include <stdexcept>
 #include <iostream>
@@ -15,6 +20,7 @@
 
 #include "types.hpp"
 #include "preprocessing.cuh"
+// #include "preproccesing_old.cuh"
 #include "piece_segmentation.cuh"
 #include "ccl.cuh"
 #include "pointerjumping.cuh"
@@ -227,14 +233,44 @@ int save_rgb_image(const rgb_image_t &image, const std::string &filename)
 {
     int channels = 3;
     int stride = image.width * channels;
+    int status = 1;
 
-    return stbi_write_png(
+#if (EXPORT_AS_PNG)
+    {
+        status &= stbi_write_png(
+            filename.c_str(),
+            image.width,
+            image.height,
+            channels,
+            image.data.data(),
+            stride);
+    }
+#endif
+
+#if (EXPORT_AS_JPG)
+    status &= stbi_write_jpg(
         filename.c_str(),
         image.width,
         image.height,
         channels,
         image.data.data(),
         stride);
+#endif
+
+#if (EXPORT_AS_BMP)
+    status &= stbi_write_bmp(
+        filename.c_str(),
+        image.width,
+        image.height,
+        channels,
+        image.data.data());
+#endif
+
+#if (!(EXPORT_AS_PNG || EXPORT_AS_JPG || EXPORT_AS_BMP))
+    throw std::runtime_error("No valid export format specified");
+#endif
+
+    return status;
 }
 
 __global__ void helloFromDevice()
@@ -248,7 +284,8 @@ int main()
     helloFromDevice<<<2, 4>>>();
     std::cout << "[Preprocessing] starting... " << std::endl;
     auto preprocessing_time_start = std::chrono::high_resolution_clock::now();
-    grayscale_image_t image = preprocessing("../data/1_p1.jpg");
+    uint8_t *d_binary_image = nullptr;
+    rgb_image_t original_image = preprocessing("../data/1_p2.jpg", d_binary_image);
     auto preprocessing_time_end = std::chrono::high_resolution_clock::now();
 
     auto preprocessing_duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(preprocessing_time_end - preprocessing_time_start);
@@ -257,14 +294,14 @@ int main()
               << preprocessing_duration_ms.count()
               << " milliseconds\n\n";
 
-    save_gray_image(image, "debug_preprocessed.png");
+    // save_gray_image(image, "debug_preprocessed.png");
 
-    image = convert_image(read_image("../data/processed/binarymultiple.png"));
+    // image = convert_image(read_image("../data/processed/binarymultiple.png"));
 
-    std::cout << "Image loaded and converted to grayscale with size " << image.width << "x" << image.height << "." << std::endl;
+    std::cout << "Image loaded and converted to grayscale with size " << original_image.width << "x" << original_image.height << "." << std::endl;
 
-    uint32_t image_width = image.width;
-    uint32_t image_height = image.height;
+    uint32_t image_width = original_image.width;
+    uint32_t image_height = original_image.height;
     uint32_t pixel_count = image_width * image_height;
 
     //------------------------------------------------------
@@ -272,8 +309,10 @@ int main()
     //------------------------------------------------------
     std::cout << "[Erosion/Dilation] starting... " << std::endl;
     auto piece_segmentation_time_start = std::chrono::high_resolution_clock::now();
-    uint8_t *piece_seg_out = piece_segmentation(image); // black-white enlargement
+    uint8_t *piece_seg_out = piece_segmentation(d_binary_image, image_width, image_height, 5); // black-white enlargement
     auto piece_segmentation_time_end = std::chrono::high_resolution_clock::now();
+
+    cudaFree(d_binary_image); // not needed anymore, allocated in preprocessing and used in piece segmentation
 
     std::cout << "[Erosion/Dilation] done " << std::endl;
     auto piece_segmentation_duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(piece_segmentation_time_end - piece_segmentation_time_start);
@@ -304,7 +343,7 @@ int main()
     //  grayscale_image_t output_image_playne = visualize_cll(global_labels_host, grayImage_cleaned);
     //  save_gray_image(output_image_playne, "../data/processed/playned.png");
 
-    // cudaFree(piece_seg_out); need it for now in visulizer
+    cudaFree(piece_seg_out);
 
     //------------------------------------------------------
     // POINTER JUMPING
@@ -397,7 +436,7 @@ int main()
               << " milliseconds\n\n";
 
     thrust::host_vector<ContourSignalPointExt> h_smoothed = d_smoothed; // this one is necessary for the steps after
-    // save_contour_signal_csv(h_smoothed, "../data/processed/contour_signal_smoothed.csv");
+    save_contour_signal_csv(h_smoothed, "../data/processed/contour_signal_smoothed.csv");
 
     //------------------------------------------------------
     //  CORNER DETECTION
@@ -444,7 +483,7 @@ int main()
     //  CLASSIFICATION
     //------------------------------------------------------
     auto classification_start = std::chrono::high_resolution_clock::now();
-    float edge_threshold = 3.0f;
+    float edge_threshold = 4.0f;
     thrust::host_vector<ClassifiedPiece> classified = classify_edges(h_smoothed, h_corners, centroids, edge_threshold);
     auto classification_time_ms = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - classification_start);
     std::cout << "Classification time: "
@@ -474,14 +513,18 @@ int main()
     // }
 
     auto visualize_start = std::chrono::high_resolution_clock::now();
-    rgb_image_t class_debug = visualizer(piece_seg_out, image_width, image_height, d_smoothed, h_smoothed, h_corners, classified);
+    visualizer(original_image, d_smoothed, h_smoothed, h_corners, classified);
     auto visualization_time_us = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - visualize_start);
     std::cout << "Visualization time: "
               << visualization_time_us.count()
               << " milliseconds\n\n";
 
-    cudaFree(piece_seg_out);
-    save_rgb_image(class_debug, "../data/processed/classified_edges.png");
+    auto save_start = std::chrono::high_resolution_clock::now();
+    save_rgb_image(original_image, "../data/processed/classified_edges.jpg");
+    auto save_time_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - save_start);
+    std::cout << "Saving time: "
+              << save_time_ms.count()
+              << " milliseconds\n\n";
 
     return 0;
 }

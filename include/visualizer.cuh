@@ -4,11 +4,11 @@
 #include "types.hpp"
 #include "corner_detection.cuh"
 #include "classification.cuh"
+#include "types.hpp"
 
 
-rgb_image_t visualizer(
-    const uint8_t* image_in_d, // this assumes for now its a greyscale image
-    uint32_t width, uint32_t height,
+void visualizer(
+    rgb_image_t &original_image,
     const thrust::device_vector<ContourSignalPointExt>& d_points,
     const thrust::host_vector <ContourSignalPointExt>& points,
     const thrust::host_vector<PieceCorners>& corners,

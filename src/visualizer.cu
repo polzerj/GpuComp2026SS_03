@@ -75,20 +75,20 @@ __global__ void set_background(const uint8_t* base_image_data, uint8_t* image_ou
     
 }
 
-rgb_image_t visualizer(
-    const uint8_t* image_in_d, // this assumes for now its a greyscale image
-    uint32_t width, uint32_t height,
+void visualizer(
+    rgb_image_t &original_image,
     const thrust::device_vector<ContourSignalPointExt>& d_points,
     const thrust::host_vector <ContourSignalPointExt>& points,
     const thrust::host_vector<PieceCorners>& corners,
     const thrust::host_vector<ClassifiedPiece>& classified
 ) {
-    rgb_image_t out;
-    out.width =width;
-    out.height =height;
-    out.data.resize(width * height * 3); // this takes forevecer (around 50 ms)
-
-    uint32_t pixel_count= width * height;
+    // rgb_image_t out;
+    // out.width =width;
+    // out.height =height;
+    // out.data.resize(width * height * 3); // this takes forevecer (around 50 ms)
+    uint32_t width= original_image.width;
+    uint32_t height = original_image.height;
+    uint32_t pixel_count= original_image.width * original_image.height;
 
     
     std::unordered_map<uint32_t, const PieceCorners*> corner_lookup;
@@ -97,14 +97,14 @@ rgb_image_t visualizer(
     }
 
     
-    //dark grayscale background --- in a kernel
-    uint32_t threads = 256;
-    uint32_t blocks = (pixel_count + threads - 1) / threads;
+    // //dark grayscale background --- in a kernel
+    // uint32_t threads = 256;
+    // uint32_t blocks = (pixel_count + threads - 1) / threads;
 
-    uint8_t* image_background_d; 
-    cudaMalloc(&image_background_d, 3 * pixel_count * sizeof(uint8_t));
-    set_background<<<blocks,threads>>>(image_in_d, image_background_d, pixel_count);
-    cudaMemcpy(out.data.data(),image_background_d, 3 * pixel_count * sizeof(uint8_t), cudaMemcpyDeviceToHost);
+    // uint8_t* image_background_d; 
+    // cudaMalloc(&image_background_d, 3 * pixel_count * sizeof(uint8_t));
+    // set_background<<<blocks,threads>>>(image_in_d, image_background_d, pixel_count);
+    // cudaMemcpy(out.data.data(),image_background_d, 3 * pixel_count * sizeof(uint8_t), cudaMemcpyDeviceToHost);
 
     
     for (const auto& piece : classified) {
@@ -174,7 +174,7 @@ rgb_image_t visualizer(
 
                 // slightly thick contour line
                 draw_square(
-                    out,
+                    original_image,
                     static_cast<int>(p.x),
                     static_cast<int>(p.y),
                     1,
@@ -186,9 +186,9 @@ rgb_image_t visualizer(
             const auto& a = points[a_idx];
             const auto& bpt = points[b_idx];
 
-            draw_square(out, a.x, a.y, 4, 0, 255, 0);
-            draw_square(out, bpt.x, bpt.y, 4, 0, 255, 0);
+            draw_square(original_image, a.x, a.y, 4, 0, 255, 0);
+            draw_square(original_image, bpt.x, bpt.y, 4, 0, 255, 0);
         }
     }
-    return out;
+    return;
 }

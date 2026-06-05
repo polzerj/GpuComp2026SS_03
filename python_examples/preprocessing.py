@@ -28,6 +28,8 @@ def create_gaussian_kernel(size=8, sigma=1.0) -> np.ndarray:
     xx, yy = np.meshgrid(ax, ax)
     kernel = np.exp(-(xx**2 + yy**2) / (2 * sigma**2))
     kernel = kernel / np.sum(kernel)
+    print(f"Gaussian Kernel (size={size}, sigma={sigma}):\n{kernel}")
+    print(f"Kernel size: {kernel.shape}, Sum: {kernel.sum()}")
     return kernel
 
 
