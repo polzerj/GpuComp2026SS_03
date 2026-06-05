@@ -17,6 +17,8 @@
 #include <algorithm>
 #include <cstdio>
 #include <cuda_runtime.h>
+#include <sys/stat.h>
+#include <filesystem>
 
 #include "timer.hpp"
 #include "types.hpp"
@@ -280,26 +282,9 @@ __global__ void helloFromDevice()
     return;
 }
 
-int main(int argc, char *argv[])
+void process_image(std::string &image_path)
 {
-    cudaSetDeviceFlags(cudaDeviceScheduleSpin);
-    GLOBAL_TIMER_START(full_execution);
-
-    std::string image_path = "../data/1_p2.jpg";
-    if (argc == 2)
-    {
-        std::cout << "Using provided image path: " << argv[1] << "\n";
-        image_path = argv[1];
-    }
-    else if (argc > 2)
-    {
-        std::cerr << "Usage: " << argv[0] << " [image_path]\n";
-        return 1;
-    }
-    else
-    {
-        std::cout << "No image path provided, using default: " << image_path << "\n";
-    }
+    GLOBAL_TIMER_START(images_execution);
 
     DEBUG_TIMER_START(hello_from_device);
     helloFromDevice<<<2, 4>>>();
@@ -310,10 +295,6 @@ int main(int argc, char *argv[])
     DEBUG_TIMER_START(preprocessing);
     rgb_image_t original_image = preprocessing(image_path, d_binary_image);
     DEBUG_TIMER_STOP(preprocessing, "Preprocessing");
-
-    // save_gray_image(image, "debug_preprocessed.png");
-
-    // image = convert_image(read_image("../data/processed/binarymultiple.png"));
 
     std::cout << "Image loaded and converted to grayscale with size " << original_image.width << "x" << original_image.height << "." << std::endl;
 
@@ -330,21 +311,12 @@ int main(int argc, char *argv[])
 
     cudaFree(d_binary_image); // not needed anymore, allocated in preprocessing and used in piece segmentation
 
-    // cudaMemcpy(image.data.data(),piece_seg_out , image.width*image.height, cudaMemcpyDeviceToHost);
-    // save_gray_image(image,"../data/processed/after_denoising.png");
-
     //------------------------------------------------------
     // CONNECTED COMPONENT LABELING
     //------------------------------------------------------
     DEBUG_TIMER_START(ccl);
     uint32_t *global_labels_d = playne_ccl(piece_seg_out, image_width, image_height);
     DEBUG_TIMER_STOP(ccl, "CCL");
-
-    // grayscale_image_t& grayImage_cleaned = image;
-    //  uint32_t  *global_labels_host = (uint32_t*)malloc(grayImage_cleaned.width* grayImage_cleaned.height * sizeof(unsigned int));
-    //  cudaMemcpy(global_labels_host, global_labels_d, grayImage_cleaned.width* grayImage_cleaned.height * sizeof(uint32_t), cudaMemcpyDeviceToHost);
-    //  grayscale_image_t output_image_playne = visualize_cll(global_labels_host, grayImage_cleaned);
-    //  save_gray_image(output_image_playne, "../data/processed/playned.png");
 
     cudaFree(piece_seg_out);
 
@@ -354,23 +326,6 @@ int main(int argc, char *argv[])
     DEBUG_TIMER_START(pointer_jumping);
     ptr_jmp_out_t out_d = pointer_jumping(global_labels_d, image_width, image_height);
     DEBUG_TIMER_STOP(pointer_jumping, "Pointer Jumping");
-
-    // ptr_jmp_out_t arrays;
-    // arrays.boundaries = (uint32_t*)malloc(pixel_count * sizeof(unsigned int));
-    // arrays.successors = (uint32_t*)malloc(pixel_count * sizeof(unsigned int));
-    // arrays.ranks = (uint32_t*)malloc(pixel_count * sizeof(unsigned int));
-
-    // cudaMemcpy(arrays.boundaries, out_d.boundaries, pixel_count * sizeof(uint32_t), cudaMemcpyDeviceToHost);
-    // cudaMemcpy(arrays.successors, out_d.successors, pixel_count * sizeof(uint32_t), cudaMemcpyDeviceToHost);
-    // cudaMemcpy(arrays.ranks, out_d.ranks, pixel_count * sizeof(uint32_t), cudaMemcpyDeviceToHost);
-
-    // free(arrays.boundaries);
-    // free(arrays.ranks);
-    // free(arrays.successors);
-
-    // grayscale_image_t& grayImage_cleaned = image;
-    // grayscale_image_t boundary_image = visualize_cll(arrays.boundaries, grayImage_cleaned);
-    // save_gray_image(boundary_image, "../data/processed/extracted_boundaries.png");
 
     cudaFree(global_labels_d);
 
@@ -390,21 +345,7 @@ int main(int argc, char *argv[])
     thrust::device_vector<ContourSignalPoint> d_points = sort_distances(out_d.boundaries, out_d.ranks, d_centroids, image_width, image_height);
     DEBUG_TIMER_STOP(sorting, "Sorting Signals");
 
-    // for (size_t i = 0; i < std::min<size_t>(h_points.size(), 100); ++i) {
-    //     const auto& p = h_points[i];
-    //     printf("label=%u rank=%u point=(%u,%u) dist=%f\n",
-    //         p.label, p.rank, p.x, p.y, p.distance);
-    // }
-
     thrust::host_vector<ContourSignalPoint> h_points = d_points; // this one is necessary for the steps after
-    // save_contour_signal_csv(
-    //     h_points,
-    //     "../data/processed/contour_signal.csv"
-    // );
-
-    // std::cout << "Saved contour signal with "
-    //         << h_points.size()
-    //         << " boundary points.\n";
 
     cudaFree(out_d.boundaries);
     cudaFree(out_d.ranks);
@@ -438,7 +379,6 @@ int main(int argc, char *argv[])
     DEBUG_TIMER_START(corner_validation);
     auto piece_id = 0;
     auto invalid_count = 0;
-    // std::cout << "Invalid Pieces: \n";
     for (const auto &c : h_corners)
     {
         piece_id++;
@@ -452,16 +392,9 @@ int main(int argc, char *argv[])
             h_smoothed[c.point_indices.at(i)].distance = 0;
         }
     }
-    // std::cout << "\n\n";
-    // save_contour_signal_csv(h_smoothed, "../data/processed/contour_signal_smoothed_cornered.csv");
 
     std::cout << "Found " << h_corners.size() - invalid_count << " valid pieces \n\n";
     DEBUG_TIMER_STOP(corner_validation, "Corner Validation");
-
-    // grayscale_image_t grayImage_cleaned = image;
-    // grayscale_image_t corner_debug = visualize_corners(grayImage_cleaned, h_smoothed, h_corners);
-
-    // save_gray_image(corner_debug, "../data/processed/detected_corners.png");
 
     //------------------------------------------------------
     //  CLASSIFICATION
@@ -470,28 +403,6 @@ int main(int argc, char *argv[])
     float edge_threshold = 4.0f;
     thrust::host_vector<ClassifiedPiece> classified = classify_edges(h_smoothed, h_corners, centroids, edge_threshold);
     DEBUG_TIMER_STOP(classification, "Classification");
-
-    // for (const auto& p : classified) {
-    //     if (!p.valid) {
-    //         std::cout << "label=" << p.label
-    //                 << " classification failed\n";
-    //         continue;
-    //     }
-
-    //     std::cout << "label=" << p.label << " class=";
-
-    //     for (char e : p.edges) {
-    //         std::cout << e;
-    //     }
-
-    //     std::cout << " deviations=[";
-
-    //     for (float d : p.edge_deviations) {
-    //         std::cout << d << " ";
-    //     }
-
-    //     std::cout << "]\n";
-    // }
 
     DEBUG_TIMER_START(visualization);
     visualizer(original_image, d_smoothed, h_smoothed, h_corners, classified);
@@ -504,7 +415,45 @@ int main(int argc, char *argv[])
     save_rgb_image(original_image, output_path);
     DEBUG_TIMER_STOP(saving, "Saving Output Image");
 
-    GLOBAL_TIMER_STOP(full_execution, "Full Execution");
+    GLOBAL_TIMER_STOP(images_execution, "Image Execution");
+}
 
+int main(int argc, char *argv[])
+{
+    cudaSetDeviceFlags(cudaDeviceScheduleSpin);
+    GLOBAL_TIMER_START(total_execution);
+
+    if (argc == 1)
+    {
+        // no image provided, use default
+        std::string image_path = "../data/1_p2.jpg";
+        process_image(image_path);
+    }
+    else
+    {
+        for (int i = 1; i < argc; ++i)
+        {
+            std::string image_path = argv[i];
+            // check if file exists and is file
+
+            if (std::filesystem::exists(image_path) == false)
+            {
+                std::cerr << "File does not exist or is not a regular file: " << image_path << std::endl;
+                continue;
+            }
+
+            if (std::filesystem::is_directory(image_path))
+            {
+                std::cerr << "Provided path is a directory, not a file: " << image_path << std::endl;
+                continue;
+            }
+
+            std::cout << std::endl;
+            std::cout << "Processing image: " << image_path << std::endl;
+            process_image(image_path);
+        }
+    }
+
+    GLOBAL_TIMER_STOP(total_execution, "Total Execution Time");
     return 0;
 }
