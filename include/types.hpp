@@ -1,6 +1,8 @@
 #pragma once
 #include <cstdint>
 #include <vector>
+#include <cuda_runtime.h>         
+#include <thrust/device_vector.h>
 
 #define NUM_RGB_CHANNELS 3
 
@@ -9,6 +11,13 @@ struct rgb_image_t
     int width;
     int height;
     std::vector<uint8_t> data;
+};
+
+struct rgb_image_d_t
+{
+    int width;
+    int height;
+    thrust::device_vector<uchar3> data;
 };
 
 struct grayscale_image_t

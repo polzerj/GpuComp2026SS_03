@@ -6,6 +6,7 @@
 #include <thrust/reduce.h>
 #include <thrust/transform.h>
 #include <thrust/scan.h>
+#include <thrust/count.h>
 
 #include "types.hpp"
 #include "timer.hpp"
@@ -411,7 +412,7 @@ static void download_rgb_result(const pipeline_t &p, rgb_image_t &out)
     CUDA_CHECK(cudaMemcpy(out.data.data(), p.d_rgb, N * 3, cudaMemcpyDeviceToHost));
 }
 
-rgb_image_t preprocessing(const std::string &imagePath, uint8_t *&d_result)
+rgb_image_d_t preprocessing(const std::string &imagePath, uint8_t *&d_result)
 {
     DETAILED_TIMER_START(imageread);
     int W, H;
@@ -431,8 +432,12 @@ rgb_image_t preprocessing(const std::string &imagePath, uint8_t *&d_result)
     DETAILED_TIMER_STOP(luma, "rgba_to_luma");
 
     DETAILED_TIMER_START(download_rgb);
-    rgb_image_t input_rgb;
-    download_rgb_result(pipe, input_rgb);
+    //rgb_image_t input_rgb;
+    //download_rgb_result(pipe, input_rgb);
+    rgb_image_d_t input_rgb;
+    input_rgb.width = W;
+    input_rgb.height = H;
+    input_rgb.data.assign(pipe.d_rgb, pipe.d_rgb + (size_t)W * H);
     DETAILED_TIMER_STOP(download_rgb, "download RGB result");
 
     cudaFree(pipe.d_rgb);
@@ -478,6 +483,19 @@ rgb_image_t preprocessing(const std::string &imagePath, uint8_t *&d_result)
     DETAILED_TIMER_START(thresh);
     apply_threshold_kernel<<<thresh_grid, block>>>(pipe.d_gray, pipe.d_binary, W, H, h_threshold);
     DETAILED_TIMER_STOP(thresh, "apply_threshold");
+
+    DETAILED_TIMER_START(invert);
+    // count white pixels in binary result
+    thrust::device_ptr<uint8_t> d_binary_ptr(pipe.d_binary);
+    size_t white_pixels = thrust::count(d_binary_ptr, d_binary_ptr + num_pixels, 255);
+    if (white_pixels > (num_pixels - white_pixels))
+    {
+        // Invert binary if foreground is majority
+        printf("[preprocessing] Inverting binary result (foreground is majority: %zu white pixels to %zu black pixels)\n", white_pixels, num_pixels - white_pixels);
+        thrust::transform(d_binary_ptr, d_binary_ptr + num_pixels, d_binary_ptr, [] __device__(uint8_t v)
+                          { return 255 - v; });
+    }
+    DETAILED_TIMER_STOP(invert, "invert binary if needed");
 
     DETAILED_TIMER_STOP(total, "preprocessing without transfers");
     // save_uint8_stage(pipe.d_binary, W, H, "data/processed//main/debug_3_binary.png"); // final stage 1 output

@@ -6,8 +6,8 @@
 
 // define which formats to export
 #define EXPORT_AS_PNG (0)
-#define EXPORT_AS_JPG (1)
-#define EXPORT_AS_BMP (0)
+#define EXPORT_AS_JPG (0)
+#define EXPORT_AS_BMP (1)
 
 #include <string>
 #include <stdexcept>
@@ -32,6 +32,7 @@
 #include "corner_detection.cuh"
 #include "classification.cuh"
 #include "visualizer.cuh"
+#include "visualizer_exp.cuh"
 
 rgb_image_t read_image(const std::string &filePath)
 {
@@ -293,14 +294,21 @@ void process_image(std::string &image_path)
 
     uint8_t *d_binary_image = nullptr;
     DEBUG_TIMER_START(preprocessing);
-    rgb_image_t original_image = preprocessing(image_path, d_binary_image);
+    rgb_image_d_t original_image_d = preprocessing(image_path, d_binary_image);
     DEBUG_TIMER_STOP(preprocessing, "Preprocessing");
 
-    std::cout << "Image loaded and converted to grayscale with size " << original_image.width << "x" << original_image.height << "." << std::endl;
+    std::cout << "Image loaded and converted to grayscale with size " << original_image_d.width << "x" << original_image_d.height << "." << std::endl;
 
-    uint32_t image_width = original_image.width;
-    uint32_t image_height = original_image.height;
+    uint32_t image_width = original_image_d.width;
+    uint32_t image_height = original_image_d.height;
     uint32_t pixel_count = image_width * image_height;
+
+    // grayscale_image_t testimage;
+    // testimage.data.resize(pixel_count); 
+    // testimage.width = image_width;
+    // testimage.height = image_height;
+    // cudaMemcpy(testimage.data.data(), d_binary_image, pixel_count, cudaMemcpyDeviceToHost);
+    // save_gray_image(testimage,"../data/processed/grayimagefromcolour.png");
 
     //------------------------------------------------------
     // PIECE SEGMENTATION
@@ -335,18 +343,18 @@ void process_image(std::string &image_path)
     DEBUG_TIMER_START(centroid);
     thrust::device_vector<Centroid> d_centroids = compute_centroids(out_d.boundaries, image_width, image_height);
     DEBUG_TIMER_STOP(centroid, "Centroid Calculation");
-
+    DEBUG_TIMER_START(transfercentroid);
     thrust::host_vector<Centroid> centroids = d_centroids; // we need this for classification
-
+    DEBUG_TIMER_STOP(transfercentroid, "Transfer Centroid");
     //------------------------------------------------------
     // SORTING SIGNALS
     //------------------------------------------------------
     DEBUG_TIMER_START(sorting);
     thrust::device_vector<ContourSignalPoint> d_points = sort_distances(out_d.boundaries, out_d.ranks, d_centroids, image_width, image_height);
     DEBUG_TIMER_STOP(sorting, "Sorting Signals");
-
+    DEBUG_TIMER_START(transfersorting);
     thrust::host_vector<ContourSignalPoint> h_points = d_points; // this one is necessary for the steps after
-
+    DEBUG_TIMER_STOP(transfersorting, "Transfer after Sort");
     cudaFree(out_d.boundaries);
     cudaFree(out_d.ranks);
     cudaFree(out_d.successors);
@@ -355,22 +363,22 @@ void process_image(std::string &image_path)
     //  SMOOTHING SIGNALS
     //------------------------------------------------------
     auto smoothing_time_start = std::chrono::high_resolution_clock::now();
-    uint32_t smoothing_radius = 4; // magic value -- if increased too much corners are hard to detect
+    uint32_t smoothing_radius = 8; // 4 is magic value -- if increased too much corners are hard to detect
     DEBUG_TIMER_START(smoothing);
     thrust::device_vector<ContourSignalPointExt> d_smoothed = smooth_signal(h_points, d_points, smoothing_radius);
     DEBUG_TIMER_STOP(smoothing, "Smoothing Signals");
 
     DEBUG_TIMER_START(save_contour_signal);
     thrust::host_vector<ContourSignalPointExt> h_smoothed = d_smoothed; // this one is necessary for the steps after
-    save_contour_signal_csv(h_smoothed, "../data/processed/contour_signal_smoothed.csv");
+    //save_contour_signal_csv(h_smoothed, "../data/processed/contour_signal_smoothed.csv");
     DEBUG_TIMER_STOP(save_contour_signal, "Saving Smoothed Contour Signal");
 
     //------------------------------------------------------
     //  CORNER DETECTION
     //------------------------------------------------------
     DEBUG_TIMER_START(corner_detection);
-    uint32_t peak_detection_radius = 100; // magic value -- lower makes it detect incorrect corners
-    float prominece_threshold = 10.0f;    // magic value
+    uint32_t peak_detection_radius = 70; // magic value -- lower makes it detect incorrect corners -- higher makes it sometimes detect knobs as corners
+    float prominece_threshold = 8.0f;    // magic value
     uint32_t distance_threshold = 0;
 
     thrust::host_vector<PieceCorners> h_corners = detect_corners(h_smoothed, d_smoothed, peak_detection_radius, prominece_threshold, distance_threshold);
@@ -400,20 +408,16 @@ void process_image(std::string &image_path)
     //  CLASSIFICATION
     //------------------------------------------------------
     DEBUG_TIMER_START(classification);
-    float edge_threshold = 4.0f;
+    float edge_threshold = 15.0f;
     thrust::host_vector<ClassifiedPiece> classified = classify_edges(h_smoothed, h_corners, centroids, edge_threshold);
     DEBUG_TIMER_STOP(classification, "Classification");
 
     DEBUG_TIMER_START(visualization);
-    visualizer(original_image, d_smoothed, h_smoothed, h_corners, classified);
-    DEBUG_TIMER_STOP(visualization, "Visualization");
-
-    DEBUG_TIMER_START(saving);
     image_path.erase(image_path.find_last_of('.'));        // remove extension
     image_path.erase(0, image_path.find_last_of('/') + 1); // remove directories
     std::string output_path = "../data/processed/" + image_path + "_classified.jpg";
-    save_rgb_image(original_image, output_path);
-    DEBUG_TIMER_STOP(saving, "Saving Output Image");
+    visualizer_exp(&original_image_d,output_path,image_width,image_height, d_smoothed, h_smoothed, h_corners, classified);
+    DEBUG_TIMER_STOP(visualization, "Visualization and saving output image");
 
     GLOBAL_TIMER_STOP(images_execution, "Image Execution");
 }

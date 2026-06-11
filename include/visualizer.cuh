@@ -15,6 +15,3 @@ void visualizer(
     const thrust::host_vector<ClassifiedPiece>& classified
 );
 
-struct DrawTask{
-
-} typedef DrawTask_t;

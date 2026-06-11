@@ -100,13 +100,13 @@ def otsu_threshold(image: np.ndarray) -> tuple[np.ndarray, int]:
     return binary.astype(np.uint8) * 255, threshold
 
 
-image = load_grayscale_image(IMAGE_DIR / "single.JPG")
+image = load_grayscale_image(IMAGE_DIR / "input-example-tuwel.jpg")
 
 show_img(image)
 
 blurred = gaussian_filter(image, sigma=1)
-plt.imsave(IMAGE_DIR / "processed" / "blurred.png", blurred, cmap="gray")
+plt.imsave(IMAGE_DIR / "processed" / "blurredcol.png", blurred, cmap="gray")
 binary, threshold_value = otsu_threshold(blurred)
 
 show_img(binary)
-plt.imsave(IMAGE_DIR / "processed" / "binary.png", binary, cmap="gray")
+plt.imsave(IMAGE_DIR / "processed" / "binarycol.png", binary, cmap="gray")

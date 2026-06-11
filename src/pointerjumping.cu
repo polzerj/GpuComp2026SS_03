@@ -4,9 +4,11 @@
 #include <cstdint>
 #include <cstdio>
 #include <iostream>
+#include <cuda/std/utility>
 #include "types.hpp"
 #include "timer.hpp"
 #include "pointerjumping.cuh"
+#include <cuda_device_runtime_api.h>
 
 #define BLOCK_WIDTH_X 32
 #define BLOCK_WIDTH_Y 32
@@ -229,194 +231,366 @@ __global__ void list_rank_step(
     }
 }
 
-__global__ void list_ranking(ptr_jmp_out_t in, uint32_t image_width, uint32_t image_height)
+
+
+__global__ void list_ranking_chained(
+    int blocks, int threads,
+    const uint32_t *boundaries,
+    uint32_t *ptr_in, uint32_t *rank_in,
+    uint32_t *ptr_out, uint32_t *rank_out,
+    uint32_t pixel_count,
+    uint32_t *done,
+    uint32_t **final_winner_out,
+    uint32_t current_round,
+    uint32_t max_rounds)
 {
+    // Ensure only thread 0 manages the logic
+    if (blockIdx.x != 0 || threadIdx.x != 0) return;
+
+    // Reset the done flag for this round
+    *done = 1;
+
+    // Launch the processing for THIS round
+    list_rank_step<<<blocks, threads>>>(
+        boundaries, ptr_in, rank_in, ptr_out, rank_out, pixel_count, done);
+
+    // Instead of Synchronizing, we use cudaStreamTailLaunch.
+    // This tells CUDA: "Launch the next step once THIS kernel and its children are finished."
+    
+    if (current_round < max_rounds) {
+        // We launch the management for the NEXT round into the Tail Stream
+        // Note: we SWAP the pointers in the arguments for the next launch
+        list_ranking_chained<<<1, 1, 0, cudaStreamTailLaunch>>>(
+            blocks, threads,
+            boundaries,
+            ptr_out, rank_out, // Swapped: Out becomes In
+            ptr_in, rank_in,   // Swapped: In becomes Out
+            pixel_count,
+            done,
+            final_winner_out,
+            current_round + 1,
+            max_rounds
+        );
+    } else {
+        // Final round: set the winner
+        *final_winner_out = rank_in;
+    }
 }
-__device__ uint32_t get_next(uint32_t *successors, uint32_t current_pixel)
+// Optimized ranking step using packed uint2
+__global__ void list_rank_step_packed(
+    const uint32_t* boundaries,
+    const uint2*    data_in,    // .x = predecessor, .y = rank
+    uint2*          data_out,
+    uint32_t        pixel_count,
+    uint32_t*       done)
 {
+    uint32_t id = blockIdx.x * blockDim.x + threadIdx.x;
+    if (id >= pixel_count || boundaries[id] == 0) return;
+
+    uint2 current = data_in[id];
+    uint32_t p = current.x;
+
+    if (p == NIL) {
+        data_out[id] = current;
+    } else {
+        // Fetch neighbor's pointer and rank in a single 64-bit transaction
+        uint2 neighbor = __ldg(&data_in[p]);
+
+        uint2 updated;
+        updated.x = neighbor.x;             // jump
+        updated.y = current.y + neighbor.y; // accumulate rank
+        data_out[id] = updated;
+
+        // Warp-level check: if any thread in this warp isn't done, mark global 'done' as 0
+        if (updated.x != NIL) {
+            if (__any_sync(0xFFFFFFFF, true)) {
+                if ((threadIdx.x & 31) == 0) atomicExch(done, 0);
+            }
+        }
+    }
 }
+
+// Helper to pack/unpack
+__global__ void pack_data(const uint32_t* p, const uint32_t* r, uint2* dst, uint32_t n) {
+    uint32_t id = blockIdx.x * blockDim.x + threadIdx.x;
+    if (id < n) dst[id] = make_uint2(p[id], r[id]);
+}
+
+__global__ void unpack_data(const uint2* src, uint32_t* p, uint32_t* r, uint32_t n) {
+    uint32_t id = blockIdx.x * blockDim.x + threadIdx.x;
+    if (id < n) { p[id] = src[id].x; r[id] = src[id].y; }
+}
+
+
+// ptr_jmp_out_t pointer_jumping(uint32_t *global_labels, uint32_t image_width, uint32_t image_height)
+// {
+
+//     ptr_jmp_out_t out;
+
+//     // setup all the necessary memory on device and host
+//     uint32_t pixel_count = image_height * image_width;
+//     size_t bytes = pixel_count * sizeof(uint32_t);
+
+//     // Create Grid/Block
+//     dim3 block(BLOCK_WIDTH_X, BLOCK_WIDTH_Y);
+//     dim3 grid(ceil(image_width / (float)block.x), ceil(image_height / (float)block.y));
+
+//     uint32_t array_size = pixel_count * sizeof(uint32_t);
+//     // uint32_t *d_image_data_in;
+//     ptr_jmp_out_t device_data;
+
+//     // cudaMalloc((void**) &d_image_data_in, array_size);
+//     cudaMalloc((void **)&device_data.boundaries, array_size);
+//     cudaMalloc((void **)&device_data.ranks, array_size);
+//     cudaMalloc((void **)&device_data.successors, array_size);
+
+//     // cudaMemcpy(d_image_data_in, global_labels, pixel_count*sizeof(uint32_t), cudaMemcpyHostToDevice);
+//     DETAILED_TIMER_START(init_list_and_extract_boundaries);
+//     init_pointer_list_and_extract_boundaries<<<grid, block>>>(global_labels, image_width, image_height, device_data);
+//     cudaDeviceSynchronize();
+//     DETAILED_TIMER_STOP(init_list_and_extract_boundaries, "Init pointer list and extract boundaries");
+
+//     // uint32_t* d_roots;            // root per component label
+//     uint32_t *d_predecessors_a; // pointer-jumping input
+//     uint32_t *d_predecessors_b; // pointer-jumping output
+//     uint32_t *d_ranks_a;        // rank input
+//     uint32_t *d_ranks_b;        // rank output
+
+//     // cudaMalloc(&d_roots, bytes);
+//     DETAILED_TIMER_START(malloc);
+//     cudaMalloc(&d_predecessors_a, bytes);
+//     cudaMalloc(&d_predecessors_b, bytes);
+//     cudaMalloc(&d_ranks_a, bytes);
+//     cudaMalloc(&d_ranks_b, bytes);
+//     // cudaMemset(d_roots, 0xFF, bytes);
+//     cudaMemset(d_predecessors_a, 0xFF, bytes);
+//     cudaMemcpy(d_ranks_a, device_data.ranks, bytes, cudaMemcpyDeviceToDevice);
+//     DETAILED_TIMER_STOP(malloc, "Malloc for pointer jumping arrays");
+
+//     int threads = BLOCK_WIDTH_X * BLOCK_WIDTH_Y; // make 1D
+//     int blocks = (pixel_count + threads - 1) / threads;
+
+//     // find_roots<<<blocks, threads>>>(device_data.boundaries, d_roots, pixel_count);
+
+//     DETAILED_TIMER_START(build_predecessors);
+//     build_predecessors<<<blocks, threads>>>(device_data.boundaries, device_data.successors, d_predecessors_a, pixel_count);
+//     cudaDeviceSynchronize();
+//     DETAILED_TIMER_STOP(build_predecessors, "Build predecessors list");
+
+//     DETAILED_TIMER_START(break_roots);
+//     break_roots_by_label<<<blocks, threads>>>(device_data.boundaries, d_predecessors_a, d_ranks_a, pixel_count);
+//     cudaDeviceSynchronize();
+//     DETAILED_TIMER_STOP(break_roots, "Break roots by label");
+
+//     uint32_t rounds = 0;
+//     while ((1u << rounds) < pixel_count)
+//     { // log2 loop
+//         rounds++;
+//     }
+//     uint32_t host_done = 0;
+//     uint32_t *d_done;
+//     cudaMalloc(&d_done, sizeof(int));
+
+//     DETAILED_TIMER_START(pointer_jumping);
+//     for (uint32_t r = 0; r < rounds; ++r)
+//     {
+//         int initial_val = 1;
+//         cudaMemcpy(d_done, &initial_val, sizeof(uint32_t), cudaMemcpyHostToDevice);
+
+//         list_rank_step<<<blocks, threads>>>(
+//             device_data.boundaries,
+//             d_predecessors_a,
+//             d_ranks_a,
+//             d_predecessors_b,
+//             d_ranks_b,
+//             pixel_count,
+//             d_done);
+
+//         cudaMemcpy(&host_done, d_done, sizeof(uint32_t), cudaMemcpyDeviceToHost);
+
+//         if (host_done == 1)
+//         {
+//             break;
+//         }
+
+//         std::swap(d_predecessors_a, d_predecessors_b);
+//         std::swap(d_ranks_a, d_ranks_b);
+//     }
+
+//     //this is unfortunatelly slower
+//     // uint32_t**final_pointer;
+//     // cudaMalloc(&final_pointer, sizeof(uint32_t*));
+
+//     // // Start the chain
+//     // list_ranking_chained<<<1, 1>>>(
+//     //     blocks, threads,
+//     //     device_data.boundaries,
+//     //     d_predecessors_a, d_ranks_a,
+//     //     d_predecessors_b, d_ranks_b,
+//     //     pixel_count,
+//     //     d_done,
+//     //     final_pointer,
+//     //     0,      // current_round
+//     //     rounds  // max_rounds
+//     // );
+//     // cudaDeviceSynchronize();
+
+//     // uint32_t *h_winning_buffer_addr;
+//     // cudaMemcpy(&h_winning_buffer_addr, final_pointer, sizeof(uint32_t*), cudaMemcpyDeviceToHost);
+
+//     DETAILED_TIMER_STOP(pointer_jumping, "Pointer Jumping");
+
+//     // cudaMemcpy(out.boundaries, device_data.boundaries, pixel_count * sizeof(uint32_t), cudaMemcpyDeviceToHost);
+//     // cudaMemcpy(out.successors, device_data.successors, pixel_count * sizeof(uint32_t), cudaMemcpyDeviceToHost);
+//     // cudaMemcpy(out.ranks, d_ranks_a, pixel_count * sizeof(uint32_t), cudaMemcpyDeviceToHost);
+
+//     cudaMemcpy(device_data.ranks, d_ranks_a, bytes, cudaMemcpyDeviceToDevice);
+//     out.boundaries = device_data.boundaries;
+//     out.successors = device_data.successors;
+//     out.ranks = device_data.ranks;
+
+//     // printf("Printing boundaries\n");
+//     // for (uint32_t y = 0; y < image_height; ++y) {
+//     //     for (uint32_t x = 0; x < image_width; ++x) {
+//     //         uint32_t id = x + y * image_width;
+
+//     //         if (out.boundaries[id] != 0) {
+//     //             uint32_t succ = out.successors[id];
+
+//     //             uint32_t succ_x = succ % image_width;
+//     //             uint32_t succ_y = succ / image_width;
+
+//     //             printf(
+//     //                 "pixel (%u,%u) id=%u label=%u -> successor id=%u (%u,%u), rank=%u\n",
+//     //                 x,
+//     //                 y,
+//     //                 id,
+//     //                 out.boundaries[id],
+//     //                 succ,
+//     //                 succ_x,
+//     //                 succ_y,
+//     //                 out.ranks[id]
+//     //             );
+//     //         }
+//     //     }
+//     // }
+
+//     // uint32_t bad = 0;
+
+//     // for (uint32_t id = 0; id < pixel_count; ++id) {
+//     //     uint32_t label = out.boundaries[id];
+
+//     //     if (label == 0) {
+//     //         continue;
+//     //     }
+
+//     //     uint32_t succ = out.successors[id];
+
+//     //     if (succ >= pixel_count) {
+//     //         printf("BAD: successor out of range: id=%u succ=%u\n", id, succ);
+//     //         bad++;
+//     //         continue;
+//     //     }
+
+//     //     if (out.boundaries[succ] != label) {
+//     //         printf("BAD: successor has different label: id=%u label=%u succ=%u succ_label=%u\n",
+//     //             id, label, succ, out.boundaries[succ]);
+//     //         bad++;
+//     //         continue;
+//     //     }
+
+//     //     if (succ == label) {
+//     //         // id is the last pixel before root
+//     //         // rank[id] should be max rank of that component
+//     //         continue;
+//     //     }
+
+//     //     if (out.ranks[succ] != out.ranks[id] + 1) {
+//     //         printf("BAD rank continuity: id=%u rank=%u succ=%u succ_rank=%u label=%u\n",
+//     //             id, out.ranks[id], succ, out.ranks[succ], label);
+//     //         bad++;
+//     //     }
+//     // }
+
+//     // printf("Rank continuity check: bad=%u\n", bad);
+
+//     // cudaFree(d_image_data_in);
+//     // cudaFree(device_data.boundaries);
+//     //  cudaFree(device_data.ranks);
+//     //  cudaFree(device_data.successors);
+//     cudaFree(d_predecessors_a);
+//     cudaFree(d_predecessors_b);
+//     cudaFree(d_ranks_a);
+//     cudaFree(d_ranks_b);
+
+//     return out;
+// }
 
 ptr_jmp_out_t pointer_jumping(uint32_t *global_labels, uint32_t image_width, uint32_t image_height)
 {
-
-    ptr_jmp_out_t out;
-
-    // setup all the necessary memory on device and host
     uint32_t pixel_count = image_height * image_width;
     size_t bytes = pixel_count * sizeof(uint32_t);
-
-    // Create Grid/Block
     dim3 block(BLOCK_WIDTH_X, BLOCK_WIDTH_Y);
-    dim3 grid(ceil(image_width / (float)block.x), ceil(image_height / (float)block.y));
+    dim3 grid((image_width + block.x - 1) / block.x, (image_height + block.y - 1) / block.y);
+    int threads_1d = 256;
+    int blocks_1d = (pixel_count + threads_1d - 1) / threads_1d;
 
-    uint32_t array_size = pixel_count * sizeof(uint32_t);
-    // uint32_t *d_image_data_in;
-    ptr_jmp_out_t device_data;
-
-    // cudaMalloc((void**) &d_image_data_in, array_size);
-    cudaMalloc((void **)&device_data.boundaries, array_size);
-    cudaMalloc((void **)&device_data.ranks, array_size);
-    cudaMalloc((void **)&device_data.successors, array_size);
-
-    // cudaMemcpy(d_image_data_in, global_labels, pixel_count*sizeof(uint32_t), cudaMemcpyHostToDevice);
-    DETAILED_TIMER_START(init_list_and_extract_boundaries);
-    init_pointer_list_and_extract_boundaries<<<grid, block>>>(global_labels, image_width, image_height, device_data);
-    cudaDeviceSynchronize();
-    DETAILED_TIMER_STOP(init_list_and_extract_boundaries, "Init pointer list and extract boundaries");
-
-    // uint32_t* d_roots;            // root per component label
-    uint32_t *d_predecessors_a; // pointer-jumping input
-    uint32_t *d_predecessors_b; // pointer-jumping output
-    uint32_t *d_ranks_a;        // rank input
-    uint32_t *d_ranks_b;        // rank output
-
-    // cudaMalloc(&d_roots, bytes);
+    ptr_jmp_out_t out;
     DETAILED_TIMER_START(malloc);
-    cudaMalloc(&d_predecessors_a, bytes);
-    cudaMalloc(&d_predecessors_b, bytes);
-    cudaMalloc(&d_ranks_a, bytes);
-    cudaMalloc(&d_ranks_b, bytes);
-    // cudaMemset(d_roots, 0xFF, bytes);
-    cudaMemset(d_predecessors_a, 0xFF, bytes);
-    cudaMemcpy(d_ranks_a, device_data.ranks, bytes, cudaMemcpyDeviceToDevice);
-    DETAILED_TIMER_STOP(malloc, "Malloc for pointer jumping arrays");
+    cudaMalloc(&out.boundaries, bytes);
+    cudaMalloc(&out.ranks,      bytes);
+    cudaMalloc(&out.successors, bytes);
+    uint2 *d_work_a, *d_work_b;
+    cudaMalloc(&d_work_a, pixel_count * sizeof(uint2));
+    cudaMalloc(&d_work_b, pixel_count * sizeof(uint2));
+    uint32_t *d_predecessors;
+    cudaMalloc(&d_predecessors, bytes);
+    cudaMemset(d_predecessors, 0xFF, bytes); // NIL
+    DETAILED_TIMER_STOP(malloc, "Allocate arrays");
+    
 
-    int threads = BLOCK_WIDTH_X * BLOCK_WIDTH_Y; // make 1D
-    int blocks = (pixel_count + threads - 1) / threads;
+    // 1. Init and Build Predecessors 
+    DETAILED_TIMER_START(init_list_and_extract_boundaries);
+    init_pointer_list_and_extract_boundaries<<<grid, block>>>(global_labels, image_width, image_height, out);
+    DETAILED_TIMER_STOP(init_list_and_extract_boundaries, "Init pointer list and extract boundaries");
+    
+    DETAILED_TIMER_START(buildandbreak);
+    build_predecessors<<<blocks_1d, threads_1d>>>(out.boundaries, out.successors, d_predecessors, pixel_count);
+    break_roots_by_label<<<blocks_1d, threads_1d>>>(out.boundaries, d_predecessors, out.ranks, pixel_count);
+    DETAILED_TIMER_STOP(buildandbreak, "Build Predecessors| Break roots by label");
 
-    // find_roots<<<blocks, threads>>>(device_data.boundaries, d_roots, pixel_count);
-
-    DETAILED_TIMER_START(build_predecessors);
-    build_predecessors<<<blocks, threads>>>(device_data.boundaries, device_data.successors, d_predecessors_a, pixel_count);
-    cudaDeviceSynchronize();
-    DETAILED_TIMER_STOP(build_predecessors, "Build predecessors list");
-
-    DETAILED_TIMER_START(break_roots);
-    break_roots_by_label<<<blocks, threads>>>(device_data.boundaries, d_predecessors_a, d_ranks_a, pixel_count);
-    cudaDeviceSynchronize();
-    DETAILED_TIMER_STOP(break_roots, "Break roots by label");
-
-    uint32_t rounds = 0;
-    while ((1u << rounds) < pixel_count)
-    { // log2 loop
-        rounds++;
-    }
-    uint32_t host_done = 0;
-    uint32_t *d_done;
-    cudaMalloc(&d_done, sizeof(int));
-
+ 
+    
     DETAILED_TIMER_START(pointer_jumping);
-    for (uint32_t r = 0; r < rounds; ++r)
-    {
-        int initial_val = 1;
-        cudaMemcpy(d_done, &initial_val, sizeof(uint32_t), cudaMemcpyHostToDevice);
+    pack_data<<<blocks_1d, threads_1d>>>(d_predecessors, out.ranks, d_work_a, pixel_count);
 
-        list_rank_step<<<blocks, threads>>>(
-            device_data.boundaries,
-            d_predecessors_a,
-            d_ranks_a,
-            d_predecessors_b,
-            d_ranks_b,
-            pixel_count,
-            d_done);
+    uint32_t *d_done;
+    cudaMalloc(&d_done, sizeof(uint32_t));
 
-        cudaMemcpy(&host_done, d_done, sizeof(uint32_t), cudaMemcpyDeviceToHost);
+    uint32_t rounds = 32 - __builtin_clz(pixel_count); 
+    for (uint32_t r = 0; r < rounds; ++r) {
+        uint32_t h_done = 1;
+        cudaMemcpy(d_done, &h_done, sizeof(uint32_t), cudaMemcpyHostToDevice);
 
-        if (host_done == 1)
-        {
-            break;
-        }
+        list_rank_step_packed<<<blocks_1d, threads_1d>>>(
+            out.boundaries, d_work_a, d_work_b, pixel_count, d_done
+        );
 
-        std::swap(d_predecessors_a, d_predecessors_b);
-        std::swap(d_ranks_a, d_ranks_b);
+        cudaMemcpy(&h_done, d_done, sizeof(uint32_t), cudaMemcpyDeviceToHost);
+        std::swap(d_work_a, d_work_b);
+        if (h_done == 1) break;
     }
 
-    DETAILED_TIMER_STOP(pointer_jumping, "Pointer Jumping");
-
-    // cudaMemcpy(out.boundaries, device_data.boundaries, pixel_count * sizeof(uint32_t), cudaMemcpyDeviceToHost);
-    // cudaMemcpy(out.successors, device_data.successors, pixel_count * sizeof(uint32_t), cudaMemcpyDeviceToHost);
-    // cudaMemcpy(out.ranks, d_ranks_a, pixel_count * sizeof(uint32_t), cudaMemcpyDeviceToHost);
-
-    cudaMemcpy(device_data.ranks, d_ranks_a, bytes, cudaMemcpyDeviceToDevice);
-    out.boundaries = device_data.boundaries;
-    out.successors = device_data.successors;
-    out.ranks = device_data.ranks;
-
-    // printf("Printing boundaries\n");
-    // for (uint32_t y = 0; y < image_height; ++y) {
-    //     for (uint32_t x = 0; x < image_width; ++x) {
-    //         uint32_t id = x + y * image_width;
-
-    //         if (out.boundaries[id] != 0) {
-    //             uint32_t succ = out.successors[id];
-
-    //             uint32_t succ_x = succ % image_width;
-    //             uint32_t succ_y = succ / image_width;
-
-    //             printf(
-    //                 "pixel (%u,%u) id=%u label=%u -> successor id=%u (%u,%u), rank=%u\n",
-    //                 x,
-    //                 y,
-    //                 id,
-    //                 out.boundaries[id],
-    //                 succ,
-    //                 succ_x,
-    //                 succ_y,
-    //                 out.ranks[id]
-    //             );
-    //         }
-    //     }
-    // }
-
-    // uint32_t bad = 0;
-
-    // for (uint32_t id = 0; id < pixel_count; ++id) {
-    //     uint32_t label = out.boundaries[id];
-
-    //     if (label == 0) {
-    //         continue;
-    //     }
-
-    //     uint32_t succ = out.successors[id];
-
-    //     if (succ >= pixel_count) {
-    //         printf("BAD: successor out of range: id=%u succ=%u\n", id, succ);
-    //         bad++;
-    //         continue;
-    //     }
-
-    //     if (out.boundaries[succ] != label) {
-    //         printf("BAD: successor has different label: id=%u label=%u succ=%u succ_label=%u\n",
-    //             id, label, succ, out.boundaries[succ]);
-    //         bad++;
-    //         continue;
-    //     }
-
-    //     if (succ == label) {
-    //         // id is the last pixel before root
-    //         // rank[id] should be max rank of that component
-    //         continue;
-    //     }
-
-    //     if (out.ranks[succ] != out.ranks[id] + 1) {
-    //         printf("BAD rank continuity: id=%u rank=%u succ=%u succ_rank=%u label=%u\n",
-    //             id, out.ranks[id], succ, out.ranks[succ], label);
-    //         bad++;
-    //     }
-    // }
-
-    // printf("Rank continuity check: bad=%u\n", bad);
-
-    // cudaFree(d_image_data_in);
-    // cudaFree(device_data.boundaries);
-    //  cudaFree(device_data.ranks);
-    //  cudaFree(device_data.successors);
-    cudaFree(d_predecessors_a);
-    cudaFree(d_predecessors_b);
-    cudaFree(d_ranks_a);
-    cudaFree(d_ranks_b);
+    // 3. Final Result Unpack
+    // Results are in d_work_a because of the swap at the end of the loop
+    unpack_data<<<blocks_1d, threads_1d>>>(d_work_a, out.successors, out.ranks, pixel_count);
+    DETAILED_TIMER_STOP(pointer_jumping, "Pointerjumping");
+    // Cleanup
+    cudaFree(d_predecessors);
+    cudaFree(d_work_a);
+    cudaFree(d_work_b);
+    cudaFree(d_done);
 
     return out;
 }
-
 #endif
