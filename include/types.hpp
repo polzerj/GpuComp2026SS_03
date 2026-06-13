@@ -17,7 +17,7 @@ struct rgb_image_d_t
 {
     int width;
     int height;
-    thrust::device_vector<uchar3> data;
+    uchar3* data = nullptr;
 };
 
 struct grayscale_image_t

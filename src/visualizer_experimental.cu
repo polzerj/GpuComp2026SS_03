@@ -279,7 +279,7 @@ void visualizer_exp(
             (int)max_x + 2, (int)max_y + 2, 
             0, 255, 0); 
 
-        uint8_t last_corner_index= piece_corners->point_indices[3];
+        uint32_t last_corner_index= piece_corners->point_indices[3];
         uint8_t top_edge_index = 3;
 
         //wenn der 1. corner in dem vektor die root ist und der x index vom 1. corner nicht größer als der vom letzten corner ist dann 
@@ -340,12 +340,12 @@ void visualizer_exp(
     uint32_t threads= 256;
     uint32_t blocks = (pixel_buffer.size()+ threads - 1)/threads;
 
-    draw_visuals<<<blocks,threads>>>(thrust::raw_pointer_cast(pixel_buffer_d.data()), thrust::raw_pointer_cast(original_image_d->data.data()), pixel_buffer.size());
+    draw_visuals<<<blocks,threads>>>(thrust::raw_pointer_cast(pixel_buffer_d.data()), original_image_d->data, pixel_buffer.size());
 
     cudaDeviceSynchronize();
 
     save_image_nvjpeg(filename, 
-                      thrust::raw_pointer_cast(original_image_d->data.data()), 
+                      original_image_d->data, 
                       image_width, 
                       image_height);
 

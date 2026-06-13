@@ -20,6 +20,15 @@ struct is_positive
     }
 };
 
+struct count_at_least {
+    uint32_t threshold;
+
+    __host__ __device__
+    bool operator()(uint32_t c) const {
+        return c >= threshold;
+    }
+};
+
 __global__ void compute_sums_kernel(
     const uint32_t *image,
     uint32_t width,
@@ -103,7 +112,8 @@ thrust::device_vector<Centroid> compute_centroids(const uint32_t *d_labels_in, u
     thrust::sequence(indices.begin(), indices.end());
 
     // Count directly without needing a mask vector
-    uint32_t num_valid = thrust::count_if(d_count.begin(), d_count.end(), is_positive());
+    //uint32_t num_valid = thrust::count_if(d_count.begin(), d_count.end(), is_positive());
+    uint32_t num_valid = thrust::count_if(d_count.begin(), d_count.end(), count_at_least{THRESHOLD});
     DETAILED_TIMER_STOP(count_valid, "Count valid labels");
 
     if (num_valid == 0)
@@ -115,7 +125,8 @@ thrust::device_vector<Centroid> compute_centroids(const uint32_t *d_labels_in, u
     thrust::device_vector<uint32_t> d_valid_labels(num_valid);
 
     // copy_if can use d_count as the stencil directly
-    thrust::copy_if(indices.begin(), indices.end(), d_count.begin(), d_valid_labels.begin(), is_positive());
+    //thrust::copy_if(indices.begin(), indices.end(), d_count.begin(), d_valid_labels.begin(), is_positive());
+    thrust::copy_if(indices.begin(), indices.end(), d_count.begin(), d_valid_labels.begin(), count_at_least{THRESHOLD});
     DETAILED_TIMER_STOP(copy_valid_labels, "Copy valid labels");
 
     DETAILED_TIMER_START(compact_centroids);

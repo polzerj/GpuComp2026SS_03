@@ -437,7 +437,8 @@ rgb_image_d_t preprocessing(const std::string &imagePath, uint8_t *&d_result)
     rgb_image_d_t input_rgb;
     input_rgb.width = W;
     input_rgb.height = H;
-    input_rgb.data.assign(pipe.d_rgb, pipe.d_rgb + (size_t)W * H);
+    input_rgb.data = pipe.d_rgb;
+    pipe.d_rgb = nullptr; // ownership moved
     DETAILED_TIMER_STOP(download_rgb, "download RGB result");
 
     cudaFree(pipe.d_rgb);
@@ -450,7 +451,11 @@ rgb_image_d_t preprocessing(const std::string &imagePath, uint8_t *&d_result)
     size_t smem_gauss = (size_t)rows_gauss * (block.x + 2 * radius + block.x) * sizeof(float);
 
     DETAILED_TIMER_START(gauss);
-    gaussian_fused<<<grid, block, smem_gauss>>>(pipe.d_gray, pipe.d_gray, W, H, radius);
+    float* d_blur = nullptr;
+    cudaMalloc(&d_blur, sizeof(float) * W * H);
+    gaussian_fused<<<grid, block, smem_gauss>>>(pipe.d_gray, d_blur, W, H, radius);
+    std::swap(pipe.d_gray, d_blur);
+    cudaFree(d_blur);
     DETAILED_TIMER_STOP(gauss, "gaussian_fused");
 
     // Otsu threshold

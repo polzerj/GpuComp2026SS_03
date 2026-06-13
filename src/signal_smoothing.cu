@@ -24,15 +24,22 @@ __global__ void smooth_signal_kernel(
     for (int offset = -r; offset <= r; offset++)
     {
         int local_idx = rank + offset;
-        local_idx = ((local_idx % static_cast<int>(length)) + static_cast<int>(length)) % static_cast<int>(length);
+        // local_idx = ((local_idx % static_cast<int>(length)) + static_cast<int>(length)) % static_cast<int>(length);
+        if (local_idx < 0) {
+            local_idx += length;
+        } else if (local_idx >= static_cast<int>(length)) {
+            local_idx -= length;
+        }
         sum += input[start + local_idx].distance;
         count++;
     }
+    float inv_count = 1.0f / static_cast<float>(2 * radius + 1);
     output[tid].label = input[tid].label;
     output[tid].rank = input[tid].rank;
     output[tid].x = input[tid].x;
     output[tid].y = input[tid].y;
-    output[tid].distance = sum * 1.0 / count;
+    // output[tid].distance = sum * 1.0 / count;
+    output[tid].distance = sum * inv_count;
     output[tid].piece_length = length;
 }
 

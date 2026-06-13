@@ -114,6 +114,7 @@ thrust::host_vector<ClassifiedPiece> classify_edges(
     float edge_threshold)
 {
     thrust::host_vector<ClassifiedPiece> result;
+    result.reserve(corners.size());
 
     std::unordered_map<uint32_t, std::pair<float, float>> centroid_by_label;
 

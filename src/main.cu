@@ -384,7 +384,7 @@ void process_image(std::string &image_path)
     thrust::host_vector<PieceCorners> h_corners = detect_corners(h_smoothed, d_smoothed, peak_detection_radius, prominece_threshold, distance_threshold);
     DEBUG_TIMER_STOP(corner_detection, "Corner Detection");
 
-    DEBUG_TIMER_START(corner_validation);
+    CPU_TIMER_START(corner_validation);
     auto piece_id = 0;
     auto invalid_count = 0;
     for (const auto &c : h_corners)
@@ -402,22 +402,23 @@ void process_image(std::string &image_path)
     }
 
     std::cout << "Found " << h_corners.size() - invalid_count << " valid pieces \n\n";
-    DEBUG_TIMER_STOP(corner_validation, "Corner Validation");
+    CPU_TIMER_STOP(corner_validation, "Corner Validation");
 
     //------------------------------------------------------
     //  CLASSIFICATION
     //------------------------------------------------------
-    DEBUG_TIMER_START(classification);
+    CPU_TIMER_START(classification);
     float edge_threshold = 15.0f;
     thrust::host_vector<ClassifiedPiece> classified = classify_edges(h_smoothed, h_corners, centroids, edge_threshold);
-    DEBUG_TIMER_STOP(classification, "Classification");
+    CPU_TIMER_STOP(classification, "Classification");
 
-    DEBUG_TIMER_START(visualization);
+    CPU_TIMER_START(visualization);
     image_path.erase(image_path.find_last_of('.'));        // remove extension
     image_path.erase(0, image_path.find_last_of('/') + 1); // remove directories
     std::string output_path = "../data/processed/" + image_path + "_classified.jpg";
     visualizer_exp(&original_image_d,output_path,image_width,image_height, d_smoothed, h_smoothed, h_corners, classified);
-    DEBUG_TIMER_STOP(visualization, "Visualization and saving output image");
+    cudaFree(original_image_d.data);
+    CPU_TIMER_STOP(visualization, "Visualization and saving output image");
 
     GLOBAL_TIMER_STOP(images_execution, "Image Execution");
 }

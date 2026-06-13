@@ -21,6 +21,29 @@ struct IsBoundary
     }
 };
 
+struct IsValidBoundaryId {
+    const uint32_t* boundaries;
+    const float* center_x;
+    const float* center_y;
+    uint32_t center_capacity;
+
+    __host__ __device__
+    bool operator()(uint32_t pixel_id) const {
+        uint32_t label = boundaries[pixel_id];
+
+        if (label == 0) {
+            return false;
+        }
+
+        if (label >= center_capacity) {
+            return false;
+        }
+
+        // Only keep labels for which a valid centroid exists.
+        return center_x[label] >= 0.0f && center_y[label] >= 0.0f;
+    }
+};
+
 __global__ void scatter_centroids_by_label(
     const Centroid *centroids,
     uint32_t num_centroids,
@@ -108,7 +131,7 @@ thrust::device_vector<ContourSignalPoint> sort_distances(
 
     if (pixel_count == 0 || d_centroids.empty())
     {
-        return thrust::host_vector<ContourSignalPoint>();
+        return thrust::device_vector<ContourSignalPoint>();
     }
 
     // thrust::device_vector<uint32_t> d_boundaries(h_boundaries, h_boundaries + pixel_count);
@@ -150,36 +173,53 @@ thrust::device_vector<ContourSignalPoint> sort_distances(
     // ---------------------------------------------------------------------
     // Filter out small blobs and noise
     // ---------------------------------------------------------------------
-    DETAILED_TIMER_START(filter_boundaries);
-    uint32_t filter_blocks = (pixel_count + threads - 1) / threads;
-    uint32_t *d_boundaries_out;
-    cudaMalloc(&d_boundaries_out, pixel_count * sizeof(uint32_t));
+    // DETAILED_TIMER_START(filter_boundaries);
+    // uint32_t filter_blocks = (pixel_count + threads - 1) / threads;
+    // uint32_t *d_boundaries_out;
+    // cudaMalloc(&d_boundaries_out, pixel_count * sizeof(uint32_t));
 
-    filter_boundaries<<<filter_blocks, threads>>>(d_boundaries,
-                                                  d_boundaries_out, pixel_count,
-                                                  thrust::raw_pointer_cast(d_center_x.data()),
-                                                  thrust::raw_pointer_cast(d_center_y.data()));
+    // filter_boundaries<<<filter_blocks, threads>>>(d_boundaries,
+    //                                               d_boundaries_out, pixel_count,
+    //                                               thrust::raw_pointer_cast(d_center_x.data()),
+    //                                               thrust::raw_pointer_cast(d_center_y.data()));
 
-    cudaDeviceSynchronize();
-    DETAILED_TIMER_STOP(filter_boundaries, "Filter boundaries");
+    // cudaDeviceSynchronize();
+    // DETAILED_TIMER_STOP(filter_boundaries, "Filter boundaries");
 
-    // ---------------------------------------------------------------------
-    // Compact boundary pixel IDs
-    // ---------------------------------------------------------------------
+    // // ---------------------------------------------------------------------
+    // // Compact boundary pixel IDs
+    // // ---------------------------------------------------------------------
 
     DETAILED_TIMER_START(compact_boundaries);
-    thrust::device_vector<uint32_t> d_all_ids(pixel_count);
-    thrust::sequence(d_all_ids.begin(), d_all_ids.end());
+    // thrust::device_vector<uint32_t> d_all_ids(pixel_count);
+    // thrust::sequence(d_all_ids.begin(), d_all_ids.end());
+
+    // thrust::device_vector<uint32_t> d_boundary_ids(pixel_count);
+
+    // thrust::device_ptr<uint32_t> wrapped_out = thrust::device_pointer_cast(d_boundaries_out);
+    // auto boundary_end = thrust::copy_if(
+    //     d_all_ids.begin(),
+    //     d_all_ids.end(),
+    //     wrapped_out,
+    //     d_boundary_ids.begin(),
+    //     IsBoundary()); // copy_if returns an iterator pointing to the end of the copied sequence
+
+    auto ids_begin = thrust::make_counting_iterator<uint32_t>(0);
+    auto ids_end   = ids_begin + pixel_count;
 
     thrust::device_vector<uint32_t> d_boundary_ids(pixel_count);
 
-    thrust::device_ptr<uint32_t> wrapped_out = thrust::device_pointer_cast(d_boundaries_out);
     auto boundary_end = thrust::copy_if(
-        d_all_ids.begin(),
-        d_all_ids.end(),
-        wrapped_out,
+        ids_begin,
+        ids_end,
         d_boundary_ids.begin(),
-        IsBoundary()); // copy_if returns an iterator pointing to the end of the copied sequence
+        IsValidBoundaryId{
+            d_boundaries,
+            thrust::raw_pointer_cast(d_center_x.data()),
+            thrust::raw_pointer_cast(d_center_y.data()),
+            static_cast<uint32_t>(d_center_x.size())
+        }
+    );
 
     uint32_t num_boundary = static_cast<uint32_t>(boundary_end - d_boundary_ids.begin());
 
@@ -188,7 +228,7 @@ thrust::device_vector<ContourSignalPoint> sort_distances(
 
     if (num_boundary == 0)
     {
-        return thrust::host_vector<ContourSignalPoint>();
+        return thrust::device_vector<ContourSignalPoint>();
     }
 
     // ---------------------------------------------------------------------
@@ -204,7 +244,7 @@ thrust::device_vector<ContourSignalPoint> sort_distances(
 
     make_signal_keys_and_values<<<signal_blocks, threads>>>(
         thrust::raw_pointer_cast(d_boundary_ids.data()),
-        d_boundaries_out,
+        d_boundaries,
         d_ranks,
         thrust::raw_pointer_cast(d_center_x.data()),
         thrust::raw_pointer_cast(d_center_y.data()),
@@ -212,8 +252,6 @@ thrust::device_vector<ContourSignalPoint> sort_distances(
         thrust::raw_pointer_cast(d_points.data()),
         width,
         num_boundary);
-
-    cudaFree(d_boundaries_out);
 
     thrust::sort_by_key(
         d_keys.begin(),
