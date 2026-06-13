@@ -283,7 +283,7 @@ __global__ void helloFromDevice()
     return;
 }
 
-void process_image(std::string &image_path)
+void process_image(std::string &image_path, visualizer_workspace_t& vis_ws, jpeg_encoder_t& jpeg_encoder)
 {
     GLOBAL_TIMER_START(images_execution);
 
@@ -362,10 +362,9 @@ void process_image(std::string &image_path)
     //------------------------------------------------------
     //  SMOOTHING SIGNALS
     //------------------------------------------------------
-    auto smoothing_time_start = std::chrono::high_resolution_clock::now();
-    uint32_t smoothing_radius = 8; // 4 is magic value -- if increased too much corners are hard to detect
     DEBUG_TIMER_START(smoothing);
-    thrust::device_vector<ContourSignalPointExt> d_smoothed = smooth_signal(h_points, d_points, smoothing_radius);
+    uint32_t smoothing_radius = 8; // 4 is magic value -- if increased too much corners are hard to detect
+    thrust::device_vector<ContourSignalPointExt> d_smoothed = smooth_signal(h_points, d_points, smoothing_radius);    
     DEBUG_TIMER_STOP(smoothing, "Smoothing Signals");
 
     DEBUG_TIMER_START(save_contour_signal);
@@ -413,13 +412,25 @@ void process_image(std::string &image_path)
     CPU_TIMER_STOP(classification, "Classification");
 
     CPU_TIMER_START(visualization);
+    
     image_path.erase(image_path.find_last_of('.'));        // remove extension
     image_path.erase(0, image_path.find_last_of('/') + 1); // remove directories
     std::string output_path = "../data/processed/" + image_path + "_classified.jpg";
-    visualizer_exp(&original_image_d,output_path,image_width,image_height, d_smoothed, h_smoothed, h_corners, classified);
+    visualizer_exp(
+        &original_image_d,
+        output_path,
+        image_width,
+        image_height,
+        h_smoothed,
+        h_corners,
+        classified,
+        vis_ws,
+        jpeg_encoder
+    );    
     cudaFree(original_image_d.data);
+    
     CPU_TIMER_STOP(visualization, "Visualization and saving output image");
-
+    
     GLOBAL_TIMER_STOP(images_execution, "Image Execution");
 }
 
@@ -428,11 +439,15 @@ int main(int argc, char *argv[])
     cudaSetDeviceFlags(cudaDeviceScheduleSpin);
     GLOBAL_TIMER_START(total_execution);
 
+    visualizer_workspace_t vis_ws;
+    jpeg_encoder_t jpeg_encoder;
+    init_jpeg_encoder(jpeg_encoder, 50);
+    
     if (argc == 1)
     {
         // no image provided, use default
         std::string image_path = "../data/1_p2.jpg";
-        process_image(image_path);
+        process_image(image_path, vis_ws, jpeg_encoder);
     }
     else
     {
@@ -455,9 +470,12 @@ int main(int argc, char *argv[])
 
             std::cout << std::endl;
             std::cout << "Processing image: " << image_path << std::endl;
-            process_image(image_path);
+            process_image(image_path, vis_ws, jpeg_encoder);
         }
     }
+
+    free_visualizer_workspace(vis_ws);
+    destroy_jpeg_encoder(jpeg_encoder);
 
     GLOBAL_TIMER_STOP(total_execution, "Total Execution Time");
     return 0;
