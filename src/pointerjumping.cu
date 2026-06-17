@@ -563,6 +563,9 @@ ptr_jmp_out_t pointer_jumping(uint32_t *global_labels, uint32_t image_width, uin
     uint2* d_work_a = ws.d_ptr_work_a.data();
     uint2* d_work_b = ws.d_ptr_work_b.data();
     uint32_t* d_done = ws.d_ptr_done.data();
+    cudaMemset(out.boundaries, 0, bytes);
+    cudaMemset(out.ranks, 0, bytes);
+    cudaMemset(out.successors, 0xFF, bytes);
     cudaMemset(d_predecessors, 0xFF, bytes);
     DETAILED_TIMER_STOP(malloc, "Allocate arrays");
     

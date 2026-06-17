@@ -386,6 +386,7 @@ void process_image(std::string &image_path, pipeline_workspace_t& ws, visualizer
     DEBUG_TIMER_STOP(corner_detection, "Corner Detection");
 
     CPU_TIMER_START(corner_validation);
+    /*
     auto piece_id = 0;
     auto invalid_count = 0;
     for (const auto &c : h_corners)
@@ -403,6 +404,7 @@ void process_image(std::string &image_path, pipeline_workspace_t& ws, visualizer
     }
 
     std::cout << "Found " << h_corners.size() - invalid_count << " valid pieces \n\n";
+    */
     CPU_TIMER_STOP(corner_validation, "Corner Validation");
 
     //------------------------------------------------------
