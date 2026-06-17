@@ -10,6 +10,9 @@
 
 #include "timer.hpp"
 
+//#define DRAW_COLORED_EDGES
+//#define DRAW_CORNERS
+
 static void check_cuda(cudaError_t err, const char* msg) {
     if (err != cudaSuccess) {
         std::cerr << msg << ": " << cudaGetErrorString(err) << "\n";
@@ -623,6 +626,7 @@ void visualizer_exp(
             piece.edges,
             top_edge_index
         );
+#ifdef DRAW_COLORED_EDGES
 
         for (uint32_t edge = 0; edge < 4; ++edge) {
             uint32_t a_idx = piece_corners->point_indices[edge];
@@ -662,6 +666,8 @@ void visualizer_exp(
                 );
             }
         }
+#endif
+#ifdef DRAW_CORNERS
 
         for (uint32_t corner_idx : piece_corners->point_indices) {
             if (corner_idx >= points.size()) {
@@ -680,6 +686,7 @@ void visualizer_exp(
                 0, 255, 0
             );
         }
+#endif
     }
 
     CPU_TIMER_STOP(build_visualizer_pixels, "Build visualizer pixel buffer");
