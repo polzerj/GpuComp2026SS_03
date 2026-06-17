@@ -13,15 +13,24 @@
 #include "signal_smoothing.cuh"
 #include "corner_detection.cuh"
 #include "classification.cuh"
+#include <cstddef>
 
 struct issued_pixel_t {
     uint32_t pixel_index;
     uchar3 rgb;
 };
 
+// struct visualizer_workspace_t {
+//     issued_pixel_t* d_pixels = nullptr;
+//     size_t capacity = 0;
+// };
+
 struct visualizer_workspace_t {
     issued_pixel_t* d_pixels = nullptr;
     size_t capacity = 0;
+
+    uchar3* d_image_copy = nullptr;
+    size_t image_capacity = 0;
 };
 
 struct jpeg_encoder_t {

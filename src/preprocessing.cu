@@ -10,6 +10,7 @@
 
 #include "types.hpp"
 #include "timer.hpp"
+#include "pipeline_workspace.hpp"
 
 #include "stb_image.h"
 #include "preprocessing.cuh"
@@ -347,24 +348,78 @@ static std::vector<uint8_t> read_file(const std::string &path)
     return buf;
 }
 
+static pipeline_t make_pipeline_from_workspace(
+    int width,
+    int height,
+    pipeline_workspace_t& ws
+) {
+    size_t N = static_cast<size_t>(width) * static_cast<size_t>(height);
+
+    ws.d_rgb.ensure(N);
+    ws.d_gray.ensure(N);
+    ws.d_blur.ensure(N);
+    ws.d_binary.ensure(N);
+
+    ws.d_hist.ensure(HIST_BINS);
+    ws.d_threshold.ensure(1);
+
+    pipeline_t p;
+    p.width = width;
+    p.height = height;
+    p.d_rgb = ws.d_rgb.data();
+    p.d_gray = ws.d_gray.data();
+    p.d_binary = ws.d_binary.data();
+
+    return p;
+}
+
+void init_jpeg_decoder(jpeg_decoder_t& dec)
+{
+    nvjpegCreate(
+        NVJPEG_BACKEND_DEFAULT,
+        nullptr,
+        &dec.handle
+    );
+
+    nvjpegJpegStateCreate(
+        dec.handle,
+        &dec.state
+    );
+}
+
+void destroy_jpeg_decoder(jpeg_decoder_t& dec)
+{
+    if (dec.state != nullptr) {
+        nvjpegJpegStateDestroy(dec.state);
+        dec.state = nullptr;
+    }
+
+    if (dec.handle != nullptr) {
+        nvjpegDestroy(dec.handle);
+        dec.handle = nullptr;
+    }
+}
+
 // Decodes a JPEG directly to device memory (d_rgb) using nvJPEG.
 // Returns image dimensions via W, H.
-static void nvjpeg_decode(const std::vector<uint8_t> &jpeg, pipeline_t &pipe, int &W, int &H)
+static void nvjpeg_decode(const std::vector<uint8_t>& jpeg, pipeline_t& pipe, int& W, int& H, pipeline_workspace_t& ws, jpeg_decoder_t& dec)
 {
-    nvjpegHandle_t handle;
-    nvjpegJpegState_t state;
-    CUDA_CHECK((cudaError_t)nvjpegCreate(NVJPEG_BACKEND_DEFAULT, nullptr, &handle));
-    CUDA_CHECK((cudaError_t)nvjpegJpegStateCreate(handle, &state));
+    // nvjpegHandle_t handle;
+    // nvjpegJpegState_t state;
+    // CUDA_CHECK((cudaError_t)nvjpegCreate(NVJPEG_BACKEND_DEFAULT, nullptr, &handle));
+    // CUDA_CHECK((cudaError_t)nvjpegJpegStateCreate(handle, &state));
 
     // Query image dimensions before decoding
     int ncomp;
     nvjpegChromaSubsampling_t css;
     int widths[NVJPEG_MAX_COMPONENT], heights[NVJPEG_MAX_COMPONENT];
-    nvjpegGetImageInfo(handle, jpeg.data(), jpeg.size(), &ncomp, &css, widths, heights);
+    //nvjpegGetImageInfo(handle, jpeg.data(), jpeg.size(), &ncomp, &css, widths, heights);
+    nvjpegGetImageInfo( dec.handle, jpeg.data(), jpeg.size(), &ncomp, &css, widths, heights);
     W = widths[0];
     H = heights[0];
 
-    pipe = alloc_pipeline(W, H);
+    //pipe = alloc_pipeline(W, H);
+    pipe = make_pipeline_from_workspace(W, H, ws);
 
     // Point nvJPEG output at d_rgb — interleaved RGB matches uchar3 layout
     nvjpegImage_t img{};
@@ -372,13 +427,13 @@ static void nvjpeg_decode(const std::vector<uint8_t> &jpeg, pipeline_t &pipe, in
     img.pitch[0] = W * 3;
 
     DETAILED_TIMER_START(nvjpegdecode);
-    CUDA_CHECK((cudaError_t)nvjpegDecode(handle, state, jpeg.data(), jpeg.size(),
-                                         NVJPEG_OUTPUT_RGBI, &img, 0));
+    //CUDA_CHECK((cudaError_t)nvjpegDecode(handle, state, jpeg.data(), jpeg.size(), NVJPEG_OUTPUT_RGBI, &img, 0));
+    nvjpegDecode( dec.handle, dec.state, jpeg.data(), jpeg.size(), NVJPEG_OUTPUT_RGBI, &img, 0);
     CUDA_CHECK(cudaDeviceSynchronize());
     DETAILED_TIMER_STOP(nvjpegdecode, "nvJPEG decode");
 
-    nvjpegJpegStateDestroy(state);
-    nvjpegDestroy(handle);
+    // nvjpegJpegStateDestroy(state);
+    // nvjpegDestroy(handle);
 }
 
 static void jpeg_load(const std::vector<uint8_t> &jpeg, pipeline_t &pipe, int &W, int &H)
@@ -412,13 +467,13 @@ static void download_rgb_result(const pipeline_t &p, rgb_image_t &out)
     CUDA_CHECK(cudaMemcpy(out.data.data(), p.d_rgb, N * 3, cudaMemcpyDeviceToHost));
 }
 
-rgb_image_d_t preprocessing(const std::string &imagePath, uint8_t *&d_result)
+rgb_image_d_t preprocessing(const std::string &imagePath, uint8_t *&d_result,  pipeline_workspace_t& ws, jpeg_decoder_t& jpeg_decoder)
 {
     DETAILED_TIMER_START(imageread);
     int W, H;
     auto jpeg = read_file(imagePath);
     pipeline_t pipe{};
-    nvjpeg_decode(jpeg, pipe, W, H);
+    nvjpeg_decode(jpeg, pipe, W, H, ws, jpeg_decoder);
     DETAILED_TIMER_STOP(imageread, "image read + decode");
     printf("[image] %s - %d x %d\n", imagePath.c_str(), W, H);
 
@@ -438,11 +493,11 @@ rgb_image_d_t preprocessing(const std::string &imagePath, uint8_t *&d_result)
     input_rgb.width = W;
     input_rgb.height = H;
     input_rgb.data = pipe.d_rgb;
-    pipe.d_rgb = nullptr; // ownership moved
+    //pipe.d_rgb = nullptr; // ownership moved
     DETAILED_TIMER_STOP(download_rgb, "download RGB result");
 
-    cudaFree(pipe.d_rgb);
-    pipe.d_rgb = nullptr;
+    //cudaFree(pipe.d_rgb);
+    //pipe.d_rgb = nullptr;
 
     // Gaussian blur
     const int radius = build_gaussian_kernel(GAUSSIAN_SIGMA);
@@ -451,20 +506,28 @@ rgb_image_d_t preprocessing(const std::string &imagePath, uint8_t *&d_result)
     size_t smem_gauss = (size_t)rows_gauss * (block.x + 2 * radius + block.x) * sizeof(float);
 
     DETAILED_TIMER_START(gauss);
-    float* d_blur = nullptr;
-    cudaMalloc(&d_blur, sizeof(float) * W * H);
+    // float* d_blur = nullptr;
+    //cudaMalloc(&d_blur, sizeof(float) * W * H);
+    float* d_blur = ws.d_blur.data();
+    
     gaussian_fused<<<grid, block, smem_gauss>>>(pipe.d_gray, d_blur, W, H, radius);
-    std::swap(pipe.d_gray, d_blur);
-    cudaFree(d_blur);
+    //std::swap(pipe.d_gray, d_blur);
+    //cudaFree(d_blur);
+    pipe.d_gray = d_blur;
     DETAILED_TIMER_STOP(gauss, "gaussian_fused");
 
     // Otsu threshold
     const int num_pixels = W * H;
-    int *d_hist;
-    float *d_threshold;
-    // Allocate
-    CUDA_CHECK(cudaMalloc(&d_hist, HIST_BINS * sizeof(int)));
-    CUDA_CHECK(cudaMalloc(&d_threshold, sizeof(float)));
+    // int *d_hist;
+    // float *d_threshold;
+    // // Allocate
+    // CUDA_CHECK(cudaMalloc(&d_hist, HIST_BINS * sizeof(int)));
+    // CUDA_CHECK(cudaMalloc(&d_threshold, sizeof(float)));
+    // CUDA_CHECK(cudaMemset(d_hist, 0, HIST_BINS * sizeof(int)));
+
+    int* d_hist = ws.d_hist.data();
+    float* d_threshold = ws.d_threshold.data();
+
     CUDA_CHECK(cudaMemset(d_hist, 0, HIST_BINS * sizeof(int)));
 
     DETAILED_TIMER_START(hist);
@@ -474,11 +537,11 @@ rgb_image_d_t preprocessing(const std::string &imagePath, uint8_t *&d_result)
     DETAILED_TIMER_START(otsu);
     otsu_kernel<<<1, HIST_BINS>>>(d_hist, num_pixels, d_threshold);
     DETAILED_TIMER_STOP(otsu, "otsu_gpu");
-    cudaFree(d_hist);
+    //cudaFree(d_hist);
 
     float h_threshold;
     CUDA_CHECK(cudaMemcpy(&h_threshold, d_threshold, sizeof(float), cudaMemcpyDeviceToHost));
-    cudaFree(d_threshold);
+    //cudaFree(d_threshold);
 
 #ifdef PREPROC_TIMING
     printf("[preprocessing] Otsu threshold = %.1f\n", h_threshold);
@@ -509,8 +572,8 @@ rgb_image_d_t preprocessing(const std::string &imagePath, uint8_t *&d_result)
     // grayscale_image_t result;
     // download_result(pipe, result);
     // DETAILED_TIMER_STOP(download, "download result");
-    free_pipeline(pipe, true, true, false); // keep binary for further processing in main
+    // free_pipeline(pipe, true, true, false); // keep binary for further processing in main
+    // d_result = pipe.d_binary;
     d_result = pipe.d_binary;
-
     return input_rgb;
 }

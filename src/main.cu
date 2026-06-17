@@ -33,6 +33,7 @@
 #include "classification.cuh"
 #include "visualizer.cuh"
 #include "visualizer_exp.cuh"
+#include "pipeline_workspace.hpp"
 
 rgb_image_t read_image(const std::string &filePath)
 {
@@ -283,7 +284,7 @@ __global__ void helloFromDevice()
     return;
 }
 
-void process_image(std::string &image_path, visualizer_workspace_t& vis_ws, jpeg_encoder_t& jpeg_encoder)
+void process_image(std::string &image_path, pipeline_workspace_t& ws, visualizer_workspace_t& vis_ws, jpeg_decoder_t& jpeg_decoder, jpeg_encoder_t& jpeg_encoder)
 {
     GLOBAL_TIMER_START(images_execution);
 
@@ -294,7 +295,7 @@ void process_image(std::string &image_path, visualizer_workspace_t& vis_ws, jpeg
 
     uint8_t *d_binary_image = nullptr;
     DEBUG_TIMER_START(preprocessing);
-    rgb_image_d_t original_image_d = preprocessing(image_path, d_binary_image);
+    rgb_image_d_t original_image_d = preprocessing(image_path, d_binary_image, ws, jpeg_decoder);
     DEBUG_TIMER_STOP(preprocessing, "Preprocessing");
 
     std::cout << "Image loaded and converted to grayscale with size " << original_image_d.width << "x" << original_image_d.height << "." << std::endl;
@@ -314,34 +315,34 @@ void process_image(std::string &image_path, visualizer_workspace_t& vis_ws, jpeg
     // PIECE SEGMENTATION
     //------------------------------------------------------
     DEBUG_TIMER_START(piece_segmentation);
-    uint8_t *piece_seg_out = piece_segmentation(d_binary_image, image_width, image_height, 5); // black-white enlargement
+    uint8_t *piece_seg_out = piece_segmentation(d_binary_image, image_width, image_height, 5 , ws); // black-white enlargement
     DEBUG_TIMER_STOP(piece_segmentation, "Piece Segmentation");
 
-    cudaFree(d_binary_image); // not needed anymore, allocated in preprocessing and used in piece segmentation
+    //cudaFree(d_binary_image); // not needed anymore, allocated in preprocessing and used in piece segmentation
 
     //------------------------------------------------------
     // CONNECTED COMPONENT LABELING
     //------------------------------------------------------
     DEBUG_TIMER_START(ccl);
-    uint32_t *global_labels_d = playne_ccl(piece_seg_out, image_width, image_height);
+    uint32_t *global_labels_d = playne_ccl(piece_seg_out, image_width, image_height, ws);
     DEBUG_TIMER_STOP(ccl, "CCL");
 
-    cudaFree(piece_seg_out);
+    //cudaFree(piece_seg_out);
 
     //------------------------------------------------------
     // POINTER JUMPING
     //------------------------------------------------------
     DEBUG_TIMER_START(pointer_jumping);
-    ptr_jmp_out_t out_d = pointer_jumping(global_labels_d, image_width, image_height);
+    ptr_jmp_out_t out_d = pointer_jumping(global_labels_d, image_width, image_height, ws);
     DEBUG_TIMER_STOP(pointer_jumping, "Pointer Jumping");
 
-    cudaFree(global_labels_d);
+    //cudaFree(global_labels_d);
 
     //------------------------------------------------------
     // CENTROID CALUCLATION
     //------------------------------------------------------
     DEBUG_TIMER_START(centroid);
-    thrust::device_vector<Centroid> d_centroids = compute_centroids(out_d.boundaries, image_width, image_height);
+    thrust::device_vector<Centroid> d_centroids = compute_centroids(out_d.boundaries, image_width, image_height, ws);
     DEBUG_TIMER_STOP(centroid, "Centroid Calculation");
     DEBUG_TIMER_START(transfercentroid);
     thrust::host_vector<Centroid> centroids = d_centroids; // we need this for classification
@@ -350,21 +351,22 @@ void process_image(std::string &image_path, visualizer_workspace_t& vis_ws, jpeg
     // SORTING SIGNALS
     //------------------------------------------------------
     DEBUG_TIMER_START(sorting);
-    thrust::device_vector<ContourSignalPoint> d_points = sort_distances(out_d.boundaries, out_d.ranks, d_centroids, image_width, image_height);
+    thrust::device_vector<ContourSignalPoint> d_points = sort_distances(out_d.boundaries, out_d.ranks, d_centroids, image_width, image_height, ws);
     DEBUG_TIMER_STOP(sorting, "Sorting Signals");
     DEBUG_TIMER_START(transfersorting);
-    thrust::host_vector<ContourSignalPoint> h_points = d_points; // this one is necessary for the steps after
+    //thrust::host_vector<ContourSignalPoint> h_points = d_points; // this one is necessary for the steps after
     DEBUG_TIMER_STOP(transfersorting, "Transfer after Sort");
-    cudaFree(out_d.boundaries);
-    cudaFree(out_d.ranks);
-    cudaFree(out_d.successors);
+    //cudaFree(out_d.boundaries);
+    //cudaFree(out_d.ranks);
+    //cudaFree(out_d.successors);
 
     //------------------------------------------------------
     //  SMOOTHING SIGNALS
     //------------------------------------------------------
     DEBUG_TIMER_START(smoothing);
     uint32_t smoothing_radius = 8; // 4 is magic value -- if increased too much corners are hard to detect
-    thrust::device_vector<ContourSignalPointExt> d_smoothed = smooth_signal(h_points, d_points, smoothing_radius);    
+    //thrust::device_vector<ContourSignalPointExt> d_smoothed = smooth_signal(h_points, d_points, smoothing_radius, ws);
+    thrust::device_vector<ContourSignalPointExt> d_smoothed = smooth_signal(d_points, smoothing_radius, ws);
     DEBUG_TIMER_STOP(smoothing, "Smoothing Signals");
 
     DEBUG_TIMER_START(save_contour_signal);
@@ -380,7 +382,7 @@ void process_image(std::string &image_path, visualizer_workspace_t& vis_ws, jpeg
     float prominece_threshold = 8.0f;    // magic value
     uint32_t distance_threshold = 0;
 
-    thrust::host_vector<PieceCorners> h_corners = detect_corners(h_smoothed, d_smoothed, peak_detection_radius, prominece_threshold, distance_threshold);
+    thrust::host_vector<PieceCorners> h_corners = detect_corners(h_smoothed, d_smoothed, peak_detection_radius, prominece_threshold, distance_threshold, ws);
     DEBUG_TIMER_STOP(corner_detection, "Corner Detection");
 
     CPU_TIMER_START(corner_validation);
@@ -427,7 +429,7 @@ void process_image(std::string &image_path, visualizer_workspace_t& vis_ws, jpeg
         vis_ws,
         jpeg_encoder
     );    
-    cudaFree(original_image_d.data);
+    //cudaFree(original_image_d.data);
     
     CPU_TIMER_STOP(visualization, "Visualization and saving output image");
     
@@ -438,16 +440,18 @@ int main(int argc, char *argv[])
 {
     cudaSetDeviceFlags(cudaDeviceScheduleSpin);
     GLOBAL_TIMER_START(total_execution);
-
-    visualizer_workspace_t vis_ws;
-    jpeg_encoder_t jpeg_encoder;
+    pipeline_workspace_t ws{};
+    visualizer_workspace_t vis_ws{};
+    jpeg_decoder_t jpeg_decoder{};
+    init_jpeg_decoder(jpeg_decoder);
+    jpeg_encoder_t jpeg_encoder{};
     init_jpeg_encoder(jpeg_encoder, 50);
     
     if (argc == 1)
     {
         // no image provided, use default
         std::string image_path = "../data/1_p2.jpg";
-        process_image(image_path, vis_ws, jpeg_encoder);
+        process_image(image_path, ws, vis_ws, jpeg_decoder, jpeg_encoder);
     }
     else
     {
@@ -470,11 +474,12 @@ int main(int argc, char *argv[])
 
             std::cout << std::endl;
             std::cout << "Processing image: " << image_path << std::endl;
-            process_image(image_path, vis_ws, jpeg_encoder);
+            process_image(image_path, ws, vis_ws, jpeg_decoder, jpeg_encoder);
         }
     }
 
     free_visualizer_workspace(vis_ws);
+    destroy_jpeg_decoder(jpeg_decoder);
     destroy_jpeg_encoder(jpeg_encoder);
 
     GLOBAL_TIMER_STOP(total_execution, "Total Execution Time");

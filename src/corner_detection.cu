@@ -172,7 +172,8 @@ thrust::host_vector<PieceCorners> detect_corners(
     thrust::device_vector<ContourSignalPointExt> &d_smoothed,
     uint32_t peak_detection_radius,
     float prominence_threshold,
-    uint32_t distance_threshold)
+    uint32_t distance_threshold,
+    pipeline_workspace_t& ws)
 {
     uint32_t num_points = static_cast<uint32_t>(h_smoothed.size());
 
@@ -183,23 +184,56 @@ thrust::host_vector<PieceCorners> detect_corners(
 
     DETAILED_TIMER_START(corner_detection);
     // thrust::device_vector<ContourSignalPointExt> d_smoothed = h_smoothed;
-    thrust::device_vector<uint8_t> d_corners(num_points, 0);
-    thrust::device_vector<float> d_scores(num_points, 0.0f);
+    // thrust::device_vector<uint8_t> d_corners(num_points, 0);
+    // thrust::device_vector<float> d_scores(num_points, 0.0f);
+    ws.d_corner_flags.ensure(num_points);
+    ws.d_corner_scores.ensure(num_points);
+
+    uint8_t* d_corners = ws.d_corner_flags.data();
+    float* d_scores = ws.d_corner_scores.data();
 
     uint32_t threads = 256;
     uint32_t blocks = (num_points + threads - 1) / threads;
 
+    // find_corners<<<blocks, threads>>>(
+    //     thrust::raw_pointer_cast(d_smoothed.data()),
+    //     thrust::raw_pointer_cast(d_corners.data()),
+    //     thrust::raw_pointer_cast(d_scores.data()),
+    //     peak_detection_radius,
+    //     prominence_threshold,
+    //     num_points);
+    // cudaDeviceSynchronize();
+
+    // thrust::host_vector<uint8_t> h_corners_bool = d_corners;
+    // thrust::host_vector<float> h_scores = d_scores;
+
     find_corners<<<blocks, threads>>>(
         thrust::raw_pointer_cast(d_smoothed.data()),
-        thrust::raw_pointer_cast(d_corners.data()),
-        thrust::raw_pointer_cast(d_scores.data()),
+        d_corners,
+        d_scores,
         peak_detection_radius,
         prominence_threshold,
-        num_points);
+        num_points
+    );
+
     cudaDeviceSynchronize();
 
-    thrust::host_vector<uint8_t> h_corners_bool = d_corners;
-    thrust::host_vector<float> h_scores = d_scores;
+    thrust::host_vector<uint8_t> h_corners_bool(num_points);
+    thrust::host_vector<float> h_scores(num_points);
+
+    cudaMemcpy(
+        h_corners_bool.data(),
+        d_corners,
+        static_cast<size_t>(num_points) * sizeof(uint8_t),
+        cudaMemcpyDeviceToHost
+    );
+
+    cudaMemcpy(
+        h_scores.data(),
+        d_scores,
+        static_cast<size_t>(num_points) * sizeof(float),
+        cudaMemcpyDeviceToHost
+    );
 
     DETAILED_TIMER_STOP(corner_detection, "Corner Detection");
 

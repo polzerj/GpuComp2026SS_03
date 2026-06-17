@@ -2,6 +2,7 @@
 #include <cuda_runtime.h>
 #include "types.hpp"
 #include "timer.hpp"
+#include "piece_segmentation.cuh"
 
 __global__ void erode(const brightness_t *input, brightness_t *output, int width, int height, size_t kernel_size)
 {
@@ -109,16 +110,22 @@ __global__ void dilate(const brightness_t *input, brightness_t *output, int widt
     output[x + width * y] = make_white ? 255 : 0;
 }
 
-uint8_t *piece_segmentation(const brightness_t *d_input, int width, int height, size_t kernel_size)
+uint8_t *piece_segmentation(const brightness_t *d_input, int width, int height, size_t kernel_size, pipeline_workspace_t& ws)
 {
     // allocate memory
     int num_pixels = height * width;
     size_t size = num_pixels * sizeof(brightness_t);
 
-    brightness_t *d_tmp;
-    brightness_t *d_output;
-    cudaMalloc(&d_tmp, size);
-    cudaMalloc(&d_output, size);
+    // brightness_t *d_tmp;
+    // brightness_t *d_output;
+    // cudaMalloc(&d_tmp, size);
+    // cudaMalloc(&d_output, size);
+
+    ws.d_seg_tmp.ensure(num_pixels);
+    ws.d_seg_out.ensure(num_pixels);
+
+    brightness_t* d_tmp = ws.d_seg_tmp.data();
+    brightness_t* d_output = ws.d_seg_out.data();
 
     dim3 block(16, 16);
     dim3 grid((width + block.x - 1) / block.x, (height + block.y - 1) / block.y);
@@ -156,7 +163,7 @@ uint8_t *piece_segmentation(const brightness_t *d_input, int width, int height, 
     // cudaMemcpy(h_image, d_output, size, cudaMemcpyDeviceToHost);
 
     // Cleanup
-    cudaFree(d_tmp);
+    //cudaFree(d_tmp);
     // cudaFree(d_output);
     return d_output;
 }

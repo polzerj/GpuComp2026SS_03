@@ -10,6 +10,8 @@
 #include <thrust/sequence.h>
 #include <thrust/copy.h>
 #include <thrust/sort.h>
+#include <thrust/fill.h>
+#include <thrust/iterator/counting_iterator.h>
 
 #include "timer.hpp"
 
@@ -125,7 +127,8 @@ thrust::device_vector<ContourSignalPoint> sort_distances(
     const uint32_t *d_ranks,
     const thrust::device_vector<Centroid> &d_centroids,
     uint32_t width,
-    uint32_t height)
+    uint32_t height,
+    pipeline_workspace_t& ws)
 {
     uint32_t pixel_count = width * height;
 
@@ -155,8 +158,22 @@ thrust::device_vector<ContourSignalPoint> sort_distances(
     //      if(c.label > max_label) max_label = c.label;
     //  }
     //  if left out this needs to take pixel_count instead of max_label + 1
-    thrust::device_vector<float> d_center_x(pixel_count, -1.0f);
-    thrust::device_vector<float> d_center_y(pixel_count, -1.0f);
+    // thrust::device_vector<float> d_center_x(pixel_count, -1.0f);
+    // thrust::device_vector<float> d_center_y(pixel_count, -1.0f);
+    ws.d_sort_center_x.ensure(pixel_count);
+    ws.d_sort_center_y.ensure(pixel_count);
+
+    float* d_center_x = ws.d_sort_center_x.data();
+    float* d_center_y = ws.d_sort_center_y.data();
+
+    thrust::device_ptr<float> center_x_begin =
+        thrust::device_pointer_cast(d_center_x);
+
+    thrust::device_ptr<float> center_y_begin =
+        thrust::device_pointer_cast(d_center_y);
+
+    thrust::fill(center_x_begin, center_x_begin + pixel_count, -1.0f);
+    thrust::fill(center_y_begin, center_y_begin + pixel_count, -1.0f);
 
     uint32_t threads = 256;
     uint32_t centroid_blocks = (static_cast<uint32_t>(d_centroids.size()) + threads - 1) / threads;
@@ -164,8 +181,9 @@ thrust::device_vector<ContourSignalPoint> sort_distances(
     scatter_centroids_by_label<<<centroid_blocks, threads>>>(
         thrust::raw_pointer_cast(d_centroids.data()),
         static_cast<uint32_t>(d_centroids.size()),
-        thrust::raw_pointer_cast(d_center_x.data()),
-        thrust::raw_pointer_cast(d_center_y.data()));
+        d_center_x,
+        d_center_y
+    );
 
     cudaDeviceSynchronize();
     DETAILED_TIMER_STOP(scatter_centroids, "Scatter centroids by label");
@@ -207,23 +225,44 @@ thrust::device_vector<ContourSignalPoint> sort_distances(
     auto ids_begin = thrust::make_counting_iterator<uint32_t>(0);
     auto ids_end   = ids_begin + pixel_count;
 
-    thrust::device_vector<uint32_t> d_boundary_ids(pixel_count);
+    // thrust::device_vector<uint32_t> d_boundary_ids(pixel_count);
+
+    // auto boundary_end = thrust::copy_if(
+    //     ids_begin,
+    //     ids_end,
+    //     d_boundary_ids.begin(),
+    //     IsValidBoundaryId{
+    //         d_boundaries,
+    //         thrust::raw_pointer_cast(d_center_x.data()),
+    //         thrust::raw_pointer_cast(d_center_y.data()),
+    //         static_cast<uint32_t>(d_center_x.size())
+    //     }
+    // );
+
+    // uint32_t num_boundary = static_cast<uint32_t>(boundary_end - d_boundary_ids.begin());
+
+    // d_boundary_ids.resize(num_boundary);
+    ws.d_sort_boundary_ids.ensure(pixel_count);
+
+    uint32_t* d_boundary_ids = ws.d_sort_boundary_ids.data();
+
+    thrust::device_ptr<uint32_t> boundary_ids_begin =
+        thrust::device_pointer_cast(d_boundary_ids);
 
     auto boundary_end = thrust::copy_if(
         ids_begin,
         ids_end,
-        d_boundary_ids.begin(),
+        boundary_ids_begin,
         IsValidBoundaryId{
             d_boundaries,
-            thrust::raw_pointer_cast(d_center_x.data()),
-            thrust::raw_pointer_cast(d_center_y.data()),
-            static_cast<uint32_t>(d_center_x.size())
+            d_center_x,
+            d_center_y,
+            pixel_count
         }
     );
 
-    uint32_t num_boundary = static_cast<uint32_t>(boundary_end - d_boundary_ids.begin());
+    uint32_t num_boundary = static_cast<uint32_t>(boundary_end - boundary_ids_begin);
 
-    d_boundary_ids.resize(num_boundary);
     DETAILED_TIMER_STOP(compact_boundaries, "Compact boundary pixel IDs");
 
     if (num_boundary == 0)
@@ -237,26 +276,51 @@ thrust::device_vector<ContourSignalPoint> sort_distances(
     // ---------------------------------------------------------------------
 
     DETAILED_TIMER_START(sort_keys_and_values);
-    thrust::device_vector<uint64_t> d_keys(num_boundary);
+    // thrust::device_vector<uint64_t> d_keys(num_boundary);
+    // thrust::device_vector<ContourSignalPoint> d_points(num_boundary);
+    ws.d_sort_keys.ensure(num_boundary);
+
+    uint64_t* d_keys = ws.d_sort_keys.data();
+
+    thrust::device_ptr<uint64_t> keys_begin =
+        thrust::device_pointer_cast(d_keys);
+
     thrust::device_vector<ContourSignalPoint> d_points(num_boundary);
 
     uint32_t signal_blocks = (num_boundary + threads - 1) / threads;
 
+    // make_signal_keys_and_values<<<signal_blocks, threads>>>(
+    //     thrust::raw_pointer_cast(d_boundary_ids.data()),
+    //     d_boundaries,
+    //     d_ranks,
+    //     thrust::raw_pointer_cast(d_center_x.data()),
+    //     thrust::raw_pointer_cast(d_center_y.data()),
+    //     thrust::raw_pointer_cast(d_keys.data()),
+    //     thrust::raw_pointer_cast(d_points.data()),
+    //     width,
+    //     num_boundary);
     make_signal_keys_and_values<<<signal_blocks, threads>>>(
-        thrust::raw_pointer_cast(d_boundary_ids.data()),
+        d_boundary_ids,
         d_boundaries,
         d_ranks,
-        thrust::raw_pointer_cast(d_center_x.data()),
-        thrust::raw_pointer_cast(d_center_y.data()),
-        thrust::raw_pointer_cast(d_keys.data()),
+        d_center_x,
+        d_center_y,
+        d_keys,
         thrust::raw_pointer_cast(d_points.data()),
         width,
-        num_boundary);
+        num_boundary
+    );
 
+
+    // thrust::sort_by_key(
+    //     d_keys.begin(),
+    //     d_keys.end(),
+    //     d_points.begin());
     thrust::sort_by_key(
-        d_keys.begin(),
-        d_keys.end(),
-        d_points.begin());
+        keys_begin,
+        keys_begin + num_boundary,
+        d_points.begin()
+    );
 
     // thrust::host_vector<ContourSignalPoint> h_points = d_points;
 

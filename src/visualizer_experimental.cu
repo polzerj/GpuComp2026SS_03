@@ -40,6 +40,17 @@ __global__ void draw_visuals_kernel(
     image[p.pixel_index] = p.rgb;
 }
 
+// void free_visualizer_workspace(
+//     visualizer_workspace_t& ws
+// ) {
+//     if (ws.d_pixels != nullptr) {
+//         cudaFree(ws.d_pixels);
+//         ws.d_pixels = nullptr;
+//     }
+
+//     ws.capacity = 0;
+// }
+
 void free_visualizer_workspace(
     visualizer_workspace_t& ws
 ) {
@@ -49,6 +60,39 @@ void free_visualizer_workspace(
     }
 
     ws.capacity = 0;
+
+    if (ws.d_image_copy != nullptr) {
+        cudaFree(ws.d_image_copy);
+        ws.d_image_copy = nullptr;
+    }
+
+    ws.image_capacity = 0;
+}
+
+static void ensure_image_copy_capacity(
+    visualizer_workspace_t& ws,
+    size_t required_pixels
+) {
+    if (required_pixels == 0) {
+        return;
+    }
+
+    if (ws.image_capacity >= required_pixels) {
+        return;
+    }
+
+    if (ws.d_image_copy != nullptr) {
+        check_cuda(cudaFree(ws.d_image_copy), "cudaFree visualizer image copy");
+        ws.d_image_copy = nullptr;
+        ws.image_capacity = 0;
+    }
+
+    check_cuda(
+        cudaMalloc(&ws.d_image_copy, required_pixels * sizeof(uchar3)),
+        "cudaMalloc visualizer image copy"
+    );
+
+    ws.image_capacity = required_pixels;
 }
 
 static void ensure_pixel_capacity(
@@ -640,7 +684,39 @@ void visualizer_exp(
 
     CPU_TIMER_STOP(build_visualizer_pixels, "Build visualizer pixel buffer");
 
-    uchar3* d_image = original_image_d->data;
+    // uchar3* d_image = original_image_d->data;
+
+    // GPU_TIMER_START(draw_visual_pixels);
+    // upload_and_draw_pixels(ws, pixel_buffer, d_image);
+    // GPU_TIMER_STOP(draw_visual_pixels, "Draw visual pixels");
+
+    // CPU_TIMER_START(save_visualized_image);
+    // save_image_nvjpeg_reuse(
+    //     jpeg_encoder,
+    //     filename,
+    //     d_image,
+    //     image_width,
+    //     image_height
+    // );
+    // CPU_TIMER_STOP(save_visualized_image, "Save visualized image");
+
+    // CPU_TIMER_STOP(visualizer_total, "Visualizer total");
+
+    size_t num_pixels = static_cast<size_t>(image_width) * static_cast<size_t>(image_height);
+
+    ensure_image_copy_capacity(ws, num_pixels);
+
+    check_cuda(
+        cudaMemcpy(
+            ws.d_image_copy,
+            original_image_d->data,
+            num_pixels * sizeof(uchar3),
+            cudaMemcpyDeviceToDevice
+        ),
+        "cudaMemcpy visualizer image copy"
+    );
+
+    uchar3* d_image = ws.d_image_copy;
 
     GPU_TIMER_START(draw_visual_pixels);
     upload_and_draw_pixels(ws, pixel_buffer, d_image);
@@ -655,6 +731,4 @@ void visualizer_exp(
         image_height
     );
     CPU_TIMER_STOP(save_visualized_image, "Save visualized image");
-
-    CPU_TIMER_STOP(visualizer_total, "Visualizer total");
 }

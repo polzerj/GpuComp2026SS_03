@@ -526,7 +526,7 @@ __global__ void unpack_data(const uint2* src, uint32_t* p, uint32_t* r, uint32_t
 //     return out;
 // }
 
-ptr_jmp_out_t pointer_jumping(uint32_t *global_labels, uint32_t image_width, uint32_t image_height)
+ptr_jmp_out_t pointer_jumping(uint32_t *global_labels, uint32_t image_width, uint32_t image_height, pipeline_workspace_t& ws)
 {
     uint32_t pixel_count = image_height * image_width;
     size_t bytes = pixel_count * sizeof(uint32_t);
@@ -535,17 +535,35 @@ ptr_jmp_out_t pointer_jumping(uint32_t *global_labels, uint32_t image_width, uin
     int threads_1d = 256;
     int blocks_1d = (pixel_count + threads_1d - 1) / threads_1d;
 
+    ws.d_ptr_boundaries.ensure(pixel_count);
+    ws.d_ptr_ranks.ensure(pixel_count);
+    ws.d_ptr_successors.ensure(pixel_count);
+    ws.d_ptr_predecessors.ensure(pixel_count);
+    ws.d_ptr_work_a.ensure(pixel_count);
+    ws.d_ptr_work_b.ensure(pixel_count);
+    ws.d_ptr_done.ensure(1);
+
     ptr_jmp_out_t out;
+    
     DETAILED_TIMER_START(malloc);
-    cudaMalloc(&out.boundaries, bytes);
-    cudaMalloc(&out.ranks,      bytes);
-    cudaMalloc(&out.successors, bytes);
-    uint2 *d_work_a, *d_work_b;
-    cudaMalloc(&d_work_a, pixel_count * sizeof(uint2));
-    cudaMalloc(&d_work_b, pixel_count * sizeof(uint2));
-    uint32_t *d_predecessors;
-    cudaMalloc(&d_predecessors, bytes);
-    cudaMemset(d_predecessors, 0xFF, bytes); // NIL
+    // cudaMalloc(&out.boundaries, bytes);
+    // cudaMalloc(&out.ranks,      bytes);
+    // cudaMalloc(&out.successors, bytes);
+    // uint2 *d_work_a, *d_work_b;
+    // cudaMalloc(&d_work_a, pixel_count * sizeof(uint2));
+    // cudaMalloc(&d_work_b, pixel_count * sizeof(uint2));
+    // uint32_t *d_predecessors;
+    // cudaMalloc(&d_predecessors, bytes);
+    // cudaMemset(d_predecessors, 0xFF, bytes); // NIL
+    out.boundaries = ws.d_ptr_boundaries.data();
+    out.ranks = ws.d_ptr_ranks.data();
+    out.successors = ws.d_ptr_successors.data();
+
+    uint32_t* d_predecessors = ws.d_ptr_predecessors.data();
+    uint2* d_work_a = ws.d_ptr_work_a.data();
+    uint2* d_work_b = ws.d_ptr_work_b.data();
+    uint32_t* d_done = ws.d_ptr_done.data();
+    cudaMemset(d_predecessors, 0xFF, bytes);
     DETAILED_TIMER_STOP(malloc, "Allocate arrays");
     
 
@@ -564,8 +582,8 @@ ptr_jmp_out_t pointer_jumping(uint32_t *global_labels, uint32_t image_width, uin
     DETAILED_TIMER_START(pointer_jumping);
     pack_data<<<blocks_1d, threads_1d>>>(d_predecessors, out.ranks, d_work_a, pixel_count);
 
-    uint32_t *d_done;
-    cudaMalloc(&d_done, sizeof(uint32_t));
+    //uint32_t *d_done;
+    //cudaMalloc(&d_done, sizeof(uint32_t));
 
     uint32_t rounds = 32 - __builtin_clz(pixel_count); 
     for (uint32_t r = 0; r < rounds; ++r) {
@@ -586,10 +604,10 @@ ptr_jmp_out_t pointer_jumping(uint32_t *global_labels, uint32_t image_width, uin
     unpack_data<<<blocks_1d, threads_1d>>>(d_work_a, out.successors, out.ranks, pixel_count);
     DETAILED_TIMER_STOP(pointer_jumping, "Pointerjumping");
     // Cleanup
-    cudaFree(d_predecessors);
-    cudaFree(d_work_a);
-    cudaFree(d_work_b);
-    cudaFree(d_done);
+    // cudaFree(d_predecessors);
+    // cudaFree(d_work_a);
+    // cudaFree(d_work_b);
+    // cudaFree(d_done);
 
     return out;
 }
