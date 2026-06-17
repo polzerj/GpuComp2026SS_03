@@ -288,10 +288,10 @@ void process_image(std::string &image_path, pipeline_workspace_t& ws, visualizer
 {
     GLOBAL_TIMER_START(images_execution);
 
-    DEBUG_TIMER_START(hello_from_device);
-    helloFromDevice<<<2, 4>>>();
-    cudaDeviceSynchronize();
-    DEBUG_TIMER_STOP(hello_from_device, "Hello from Device");
+    // DEBUG_TIMER_START(hello_from_device);
+    // helloFromDevice<<<2, 4>>>();
+    // cudaDeviceSynchronize();
+    // DEBUG_TIMER_STOP(hello_from_device, "Hello from Device");
 
     uint8_t *d_binary_image = nullptr;
     DEBUG_TIMER_START(preprocessing);

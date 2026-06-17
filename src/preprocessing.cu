@@ -30,7 +30,7 @@ static constexpr int HIST_BINS = 256;
 static constexpr int HIST_BLOCK = 1024;
 static constexpr float GAUSSIAN_SIGMA = 2.0f;
 #define MAX_KERNEL_HALF 15
-#define PREPROC_TIMING
+//#define PREPROC_TIMING
 
 // for timing
 __global__ void warmup_kernel() {}
