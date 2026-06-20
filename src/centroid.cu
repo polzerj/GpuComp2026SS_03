@@ -20,6 +20,15 @@ struct is_positive
     }
 };
 
+struct count_at_least {
+    uint32_t threshold;
+
+    __host__ __device__
+    bool operator()(uint32_t c) const {
+        return c >= threshold;
+    }
+};
+
 __global__ void compute_sums_kernel(
     const uint32_t *image,
     uint32_t width,
@@ -64,7 +73,7 @@ __global__ void compactCentroidsKernel(
     centroids[idx].label = label;
 }
 
-thrust::device_vector<Centroid> compute_centroids(const uint32_t *d_labels_in, uint32_t width, uint32_t height)
+thrust::device_vector<Centroid> compute_centroids(const uint32_t *d_labels_in, uint32_t width, uint32_t height, pipeline_workspace_t& ws)
 {
     auto num_pixels = width * height;
 
@@ -78,44 +87,86 @@ thrust::device_vector<Centroid> compute_centroids(const uint32_t *d_labels_in, u
 
     if (max_label == 0)
     {
-        return thrust::host_vector<Centroid>();
+        return thrust::device_vector<Centroid>();
     }
 
     DETAILED_TIMER_START(compute_sums);
-    thrust::device_vector<unsigned long long> d_sum_x(max_label + 1, 0ull);
-    thrust::device_vector<unsigned long long> d_sum_y(max_label + 1, 0ull);
-    thrust::device_vector<uint32_t> d_count(max_label + 1, 0u);
+    // thrust::device_vector<unsigned long long> d_sum_x(max_label + 1, 0ull);
+    // thrust::device_vector<unsigned long long> d_sum_y(max_label + 1, 0ull);
+    // thrust::device_vector<uint32_t> d_count(max_label + 1, 0u);
+    uint32_t label_capacity = max_label + 1;
+
+    ws.d_centroid_sum_x.ensure(label_capacity);
+    ws.d_centroid_sum_y.ensure(label_capacity);
+    ws.d_centroid_count.ensure(label_capacity);
+    ws.d_centroid_indices.ensure(label_capacity);
+    ws.d_centroid_valid_labels.ensure(label_capacity);
+
+    unsigned long long* d_sum_x = ws.d_centroid_sum_x.data();
+    unsigned long long* d_sum_y = ws.d_centroid_sum_y.data();
+    uint32_t* d_count = ws.d_centroid_count.data();
+    uint32_t* d_indices = ws.d_centroid_indices.data();
+    uint32_t* d_valid_labels = ws.d_centroid_valid_labels.data();
+
+    cudaMemset(d_sum_x, 0, label_capacity * sizeof(unsigned long long));
+    cudaMemset(d_sum_y, 0, label_capacity * sizeof(unsigned long long));
+    cudaMemset(d_count, 0, label_capacity * sizeof(uint32_t));
 
     dim3 block(16, 16);
     dim3 grid((width + block.x - 1) / block.x, (height + block.y - 1) / block.y);
 
     compute_sums_kernel<<<grid, block>>>(
-        thrust::raw_pointer_cast(d_labels), width, height,
-        thrust::raw_pointer_cast(d_sum_x.data()),
-        thrust::raw_pointer_cast(d_sum_y.data()),
-        thrust::raw_pointer_cast(d_count.data()));
+        d_labels_in,
+        width,
+        height,
+        d_sum_x,
+        d_sum_y,
+        d_count
+    );
 
     cudaDeviceSynchronize();
     DETAILED_TIMER_STOP(compute_sums, "Compute sums and counts");
 
     DETAILED_TIMER_START(count_valid);
-    thrust::device_vector<uint32_t> indices(max_label + 1);
-    thrust::sequence(indices.begin(), indices.end());
+    // thrust::device_vector<uint32_t> indices(max_label + 1);
+    // thrust::sequence(indices.begin(), indices.end());
 
-    // Count directly without needing a mask vector
-    uint32_t num_valid = thrust::count_if(d_count.begin(), d_count.end(), is_positive());
+    // // Count directly without needing a mask vector
+    // //uint32_t num_valid = thrust::count_if(d_count.begin(), d_count.end(), is_positive());
+    // uint32_t num_valid = thrust::count_if(d_count.begin(), d_count.end(), count_at_least{THRESHOLD});
+    thrust::device_ptr<uint32_t> count_begin = thrust::device_pointer_cast(d_count);
+
+    thrust::device_ptr<uint32_t> indices_begin = thrust::device_pointer_cast(d_indices);
+
+    thrust::device_ptr<uint32_t> valid_labels_begin = thrust::device_pointer_cast(d_valid_labels);
+
+    thrust::sequence(indices_begin, indices_begin + label_capacity);
+
+    uint32_t num_valid = thrust::count_if(
+        count_begin,
+        count_begin + label_capacity,
+        count_at_least{THRESHOLD}
+    );
     DETAILED_TIMER_STOP(count_valid, "Count valid labels");
 
     if (num_valid == 0)
     {
-        return thrust::host_vector<Centroid>();
+        return thrust::device_vector<Centroid>();
     }
 
     DETAILED_TIMER_START(copy_valid_labels);
-    thrust::device_vector<uint32_t> d_valid_labels(num_valid);
+    // thrust::device_vector<uint32_t> d_valid_labels(num_valid);
 
-    // copy_if can use d_count as the stencil directly
-    thrust::copy_if(indices.begin(), indices.end(), d_count.begin(), d_valid_labels.begin(), is_positive());
+    // // copy_if can use d_count as the stencil directly
+    // //thrust::copy_if(indices.begin(), indices.end(), d_count.begin(), d_valid_labels.begin(), is_positive());
+    // thrust::copy_if(indices.begin(), indices.end(), d_count.begin(), d_valid_labels.begin(), count_at_least{THRESHOLD});
+    thrust::copy_if(
+        indices_begin,
+        indices_begin + label_capacity,
+        count_begin,
+        valid_labels_begin,
+        count_at_least{THRESHOLD}
+    );
     DETAILED_TIMER_STOP(copy_valid_labels, "Copy valid labels");
 
     DETAILED_TIMER_START(compact_centroids);
@@ -124,12 +175,13 @@ thrust::device_vector<Centroid> compute_centroids(const uint32_t *d_labels_in, u
     dim3 grid2((num_valid + block2.x - 1) / block2.x);
 
     compactCentroidsKernel<<<grid2, block2>>>(
-        thrust::raw_pointer_cast(d_sum_x.data()),
-        thrust::raw_pointer_cast(d_sum_y.data()),
-        thrust::raw_pointer_cast(d_count.data()),
-        thrust::raw_pointer_cast(d_valid_labels.data()),
+        d_sum_x,
+        d_sum_y,
+        d_count,
+        d_valid_labels,
         thrust::raw_pointer_cast(d_centroids.data()),
-        num_valid);
+        num_valid
+    );
     cudaDeviceSynchronize();
     DETAILED_TIMER_STOP(compact_centroids, "Compact centroids");
 

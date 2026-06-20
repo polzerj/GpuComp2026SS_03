@@ -1,13 +1,294 @@
 #include "visualizer_exp.cuh"
-#include <chrono>
-#include <nvjpeg.h>
-#include <fstream>
-#include <vector>
-#include <iostream>
 
+#include <algorithm>
+#include <cstdint>
+#include <fstream>
+#include <iostream>
+#include <stdexcept>
+#include <unordered_map>
+#include <vector>
+
+#include "timer.hpp"
+
+//#define DRAW_COLORED_EDGES
+//#define DRAW_CORNERS
+
+static void check_cuda(cudaError_t err, const char* msg) {
+    if (err != cudaSuccess) {
+        std::cerr << msg << ": " << cudaGetErrorString(err) << "\n";
+        throw std::runtime_error(msg);
+    }
+}
+
+static void check_nvjpeg(nvjpegStatus_t status, const char* msg) {
+    if (status != NVJPEG_STATUS_SUCCESS) {
+        std::cerr << msg << ": nvJPEG error code "
+                  << static_cast<int>(status) << "\n";
+        throw std::runtime_error(msg);
+    }
+}
+
+__global__ void draw_visuals_kernel(
+    const issued_pixel_t* pixels,
+    uchar3* image,
+    uint32_t num_pixels
+) {
+    uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (idx >= num_pixels) {
+        return;
+    }
+
+    issued_pixel_t p = pixels[idx];
+    image[p.pixel_index] = p.rgb;
+}
+
+// void free_visualizer_workspace(
+//     visualizer_workspace_t& ws
+// ) {
+//     if (ws.d_pixels != nullptr) {
+//         cudaFree(ws.d_pixels);
+//         ws.d_pixels = nullptr;
+//     }
+
+//     ws.capacity = 0;
+// }
+
+void free_visualizer_workspace(
+    visualizer_workspace_t& ws
+) {
+    if (ws.d_pixels != nullptr) {
+        cudaFree(ws.d_pixels);
+        ws.d_pixels = nullptr;
+    }
+
+    ws.capacity = 0;
+
+    if (ws.d_image_copy != nullptr) {
+        cudaFree(ws.d_image_copy);
+        ws.d_image_copy = nullptr;
+    }
+
+    ws.image_capacity = 0;
+}
+
+static void ensure_image_copy_capacity(
+    visualizer_workspace_t& ws,
+    size_t required_pixels
+) {
+    if (required_pixels == 0) {
+        return;
+    }
+
+    if (ws.image_capacity >= required_pixels) {
+        return;
+    }
+
+    if (ws.d_image_copy != nullptr) {
+        check_cuda(cudaFree(ws.d_image_copy), "cudaFree visualizer image copy");
+        ws.d_image_copy = nullptr;
+        ws.image_capacity = 0;
+    }
+
+    check_cuda(
+        cudaMalloc(&ws.d_image_copy, required_pixels * sizeof(uchar3)),
+        "cudaMalloc visualizer image copy"
+    );
+
+    ws.image_capacity = required_pixels;
+}
+
+static void ensure_pixel_capacity(
+    visualizer_workspace_t& ws,
+    size_t required
+) {
+    if (required == 0) {
+        return;
+    }
+
+    if (ws.capacity >= required) {
+        return;
+    }
+
+    if (ws.d_pixels != nullptr) {
+        check_cuda(cudaFree(ws.d_pixels), "cudaFree visualizer pixel buffer");
+        ws.d_pixels = nullptr;
+        ws.capacity = 0;
+    }
+
+    check_cuda(
+        cudaMalloc(&ws.d_pixels, required * sizeof(issued_pixel_t)),
+        "cudaMalloc visualizer pixel buffer"
+    );
+
+    ws.capacity = required;
+}
+
+static void upload_and_draw_pixels(
+    visualizer_workspace_t& ws,
+    const std::vector<issued_pixel_t>& pixels,
+    uchar3* d_image
+) {
+    if (pixels.empty()) {
+        return;
+    }
+
+    ensure_pixel_capacity(ws, pixels.size());
+
+    check_cuda(
+        cudaMemcpy(
+            ws.d_pixels,
+            pixels.data(),
+            pixels.size() * sizeof(issued_pixel_t),
+            cudaMemcpyHostToDevice
+        ),
+        "cudaMemcpy issued pixels"
+    );
+
+    uint32_t threads = 256;
+    uint32_t blocks =
+        static_cast<uint32_t>((pixels.size() + threads - 1) / threads);
+
+    draw_visuals_kernel<<<blocks, threads>>>(
+        ws.d_pixels,
+        d_image,
+        static_cast<uint32_t>(pixels.size())
+    );
+
+    //CUDA_KERNEL_CHECK();
+}
+
+void init_jpeg_encoder(
+    jpeg_encoder_t& enc,
+    int quality
+) {
+    check_nvjpeg(
+        nvjpegCreate(NVJPEG_BACKEND_DEFAULT, nullptr, &enc.handle),
+        "nvjpegCreate"
+    );
+
+    check_nvjpeg(
+        nvjpegEncoderStateCreate(enc.handle, &enc.state, nullptr),
+        "nvjpegEncoderStateCreate"
+    );
+
+    check_nvjpeg(
+        nvjpegEncoderParamsCreate(enc.handle, &enc.params, nullptr),
+        "nvjpegEncoderParamsCreate"
+    );
+
+    check_nvjpeg(
+        nvjpegEncoderParamsSetQuality(enc.params, quality, nullptr),
+        "nvjpegEncoderParamsSetQuality"
+    );
+
+    check_nvjpeg(
+        nvjpegEncoderParamsSetSamplingFactors(
+            enc.params,
+            NVJPEG_CSS_420,
+            nullptr
+        ),
+        "nvjpegEncoderParamsSetSamplingFactors"
+    );
+}
+
+void destroy_jpeg_encoder(
+    jpeg_encoder_t& enc
+) {
+    if (enc.params != nullptr) {
+        nvjpegEncoderParamsDestroy(enc.params);
+        enc.params = nullptr;
+    }
+
+    if (enc.state != nullptr) {
+        nvjpegEncoderStateDestroy(enc.state);
+        enc.state = nullptr;
+    }
+
+    if (enc.handle != nullptr) {
+        nvjpegDestroy(enc.handle);
+        enc.handle = nullptr;
+    }
+
+    enc.bitstream.clear();
+}
+
+static void save_image_nvjpeg_reuse(
+    jpeg_encoder_t& enc,
+    const std::string& filename,
+    uchar3* d_rgb,
+    uint32_t width,
+    uint32_t height
+) {
+    if (enc.handle == nullptr ||
+        enc.state == nullptr ||
+        enc.params == nullptr) {
+        throw std::runtime_error("jpeg_encoder_t was not initialized");
+    }
+
+    static_assert(
+        sizeof(uchar3) == 3,
+        "uchar3 must be 3 bytes for NVJPEG_INPUT_RGBI"
+    );
+
+    nvjpegImage_t nv_image{};
+    nv_image.channel[0] = reinterpret_cast<unsigned char*>(d_rgb);
+    nv_image.pitch[0] = width * sizeof(uchar3);
+
+    check_nvjpeg(
+        nvjpegEncodeImage(
+            enc.handle,
+            enc.state,
+            enc.params,
+            &nv_image,
+            NVJPEG_INPUT_RGBI,
+            width,
+            height,
+            nullptr
+        ),
+        "nvjpegEncodeImage"
+    );
+
+    size_t length = 0;
+
+    check_nvjpeg(
+        nvjpegEncodeRetrieveBitstream(
+            enc.handle,
+            enc.state,
+            nullptr,
+            &length,
+            nullptr
+        ),
+        "nvjpegEncodeRetrieveBitstream size"
+    );
+
+    enc.bitstream.resize(length);
+
+    check_nvjpeg(
+        nvjpegEncodeRetrieveBitstream(
+            enc.handle,
+            enc.state,
+            enc.bitstream.data(),
+            &length,
+            nullptr
+        ),
+        "nvjpegEncodeRetrieveBitstream data"
+    );
+
+    std::ofstream file(filename, std::ios::out | std::ios::binary);
+
+    if (!file.is_open()) {
+        throw std::runtime_error("Could not open output file: " + filename);
+    }
+
+    file.write(
+        reinterpret_cast<const char*>(enc.bitstream.data()),
+        static_cast<std::streamsize>(length)
+    );
+}
 
 static void issue_rgb_pixel(
-    thrust::host_vector<issued_pixel_t> &pixel_buffer,
+    std::vector<issued_pixel_t>& pixel_buffer,
     uint32_t image_width,
     uint32_t image_height,
     int x,
@@ -16,84 +297,27 @@ static void issue_rgb_pixel(
     uint8_t g,
     uint8_t b
 ) {
-
-    if (x < 0 || x >= image_width || y < 0 || y >= image_height) {
+    if (x < 0 || y < 0) {
         return;
     }
+
+    if (x >= static_cast<int>(image_width) ||
+        y >= static_cast<int>(image_height)) {
+        return;
+    }
+
     issued_pixel_t pixel;
-    pixel.pixel_index = (y * image_width + x); // no 3 since we are dealing with uchar3
-    pixel.rgb.x = r;
-    pixel.rgb.y = g;
-    pixel.rgb.z = b;
+    pixel.pixel_index =
+        static_cast<uint32_t>(y) * image_width + static_cast<uint32_t>(x);
+    pixel.rgb = make_uchar3(r, g, b);
+
     pixel_buffer.push_back(pixel);
 }
 
-
-void save_image_nvjpeg(const std::string& filename, uchar3* d_rgb, uint32_t width, uint32_t height) {
-    nvjpegHandle_t nv_handle;
-    nvjpegEncoderState_t nv_enc_state;
-    nvjpegEncoderParams_t nv_enc_params;
-    
-    // 1. Initialize nvJPEG
-    nvjpegCreate(NVJPEG_BACKEND_DEFAULT,NULL, &nv_handle);
-    nvjpegEncoderStateCreate(nv_handle, &nv_enc_state, NULL);
-    nvjpegEncoderParamsCreate(nv_handle, &nv_enc_params, NULL);
-
-    // 2. Set encoding parameters
-    nvjpegEncoderParamsSetQuality(nv_enc_params, 50, NULL); // Quality 0-100
-    nvjpegEncoderParamsSetSamplingFactors(nv_enc_params, NVJPEG_CSS_420, NULL);
-
-    // 3. Prepare the image struct
-    // nvJPEG expects an array of pointers to planes. 
-    // For interleaved (RGBI), only channel[0] is used.
-    nvjpegImage_t nv_image;
-    nv_image.channel[0] = (unsigned char*)d_rgb;
-    nv_image.pitch[0] = width * 3; // Number of bytes per row
-
-    // 4. Encode the image
-    nvjpegEncodeImage(nv_handle, nv_enc_state, nv_enc_params,
-        &nv_image, NVJPEG_INPUT_RGBI, width, height, NULL);
-
-    // 5. Retrieve the compressed bitstream size
-    size_t length;
-    nvjpegEncodeRetrieveBitstream(nv_handle, nv_enc_state, NULL, &length, NULL);
-
-    // 6. Download bitstream from GPU to Host
-    std::vector<uint8_t> jpeg_data(length);
-    nvjpegEncodeRetrieveBitstream(nv_handle, nv_enc_state, jpeg_data.data(), &length, NULL);
-
-    // 7. Write to file
-    std::ofstream file(filename, std::ios::out | std::ios::binary);
-    if (file.is_open()) {
-        file.write((char*)jpeg_data.data(), length);
-        file.close();
-        std::cout << "Saved image to " << filename << std::endl;
-    }
-
-    // 8. Cleanup
-    nvjpegEncoderParamsDestroy(nv_enc_params);
-    nvjpegEncoderStateDestroy(nv_enc_state);
-    nvjpegDestroy(nv_handle);
-}
-
-static void draw_rect_outline(
-    thrust::host_vector<issued_pixel_t>& pixel_buffer, uint32_t image_width, uint32_t image_height,
-    int min_x, int min_y, int max_x, int max_y,
-    uint8_t r, uint8_t g, uint8_t b
-) {
-    // Top and Bottom lines
-    for (int x = min_x; x <= max_x; ++x) {
-        issue_rgb_pixel(pixel_buffer, image_width, image_height,x, min_y, r, g, b);
-        issue_rgb_pixel(pixel_buffer, image_width, image_height, x, max_y, r, g, b);
-    }
-    // Left and Right lines
-    for (int y = min_y; y <= max_y; ++y) {
-        issue_rgb_pixel(pixel_buffer, image_width, image_height, min_x, y, r, g, b);
-        issue_rgb_pixel(pixel_buffer, image_width, image_height, max_x, y, r, g, b);
-    }
-}
 static void draw_square(
-    thrust::host_vector<issued_pixel_t>& pixel_buffer, uint32_t image_width, uint32_t image_height,
+    std::vector<issued_pixel_t>& pixel_buffer,
+    uint32_t image_width,
+    uint32_t image_height,
     int cx,
     int cy,
     int radius,
@@ -103,8 +327,46 @@ static void draw_square(
 ) {
     for (int dy = -radius; dy <= radius; ++dy) {
         for (int dx = -radius; dx <= radius; ++dx) {
-            issue_rgb_pixel(pixel_buffer, image_width, image_height, cx + dx, cy + dy, r, g, b);
+            issue_rgb_pixel(
+                pixel_buffer,
+                image_width,
+                image_height,
+                cx + dx,
+                cy + dy,
+                r, g, b
+            );
         }
+    }
+}
+
+static void draw_rect_outline(
+    std::vector<issued_pixel_t>& pixel_buffer,
+    uint32_t image_width,
+    uint32_t image_height,
+    int x0,
+    int y0,
+    int x1,
+    int y1,
+    uint8_t r,
+    uint8_t g,
+    uint8_t b
+) {
+    if (x0 > x1) {
+        std::swap(x0, x1);
+    }
+
+    if (y0 > y1) {
+        std::swap(y0, y1);
+    }
+
+    for (int x = x0; x <= x1; ++x) {
+        issue_rgb_pixel(pixel_buffer, image_width, image_height, x, y0, r, g, b);
+        issue_rgb_pixel(pixel_buffer, image_width, image_height, x, y1, r, g, b);
+    }
+
+    for (int y = y0; y <= y1; ++y) {
+        issue_rgb_pixel(pixel_buffer, image_width, image_height, x0, y, r, g, b);
+        issue_rgb_pixel(pixel_buffer, image_width, image_height, x1, y, r, g, b);
     }
 }
 
@@ -115,15 +377,15 @@ static void color_for_edge_class(
     uint8_t& b
 ) {
     switch (edge_class) {
-        case 'L': // straight
+        case 'L':
             r = 255; g = 255; b = 100;
             break;
 
-        case 'V': // knob / outward
+        case 'V':
             r = 255; g = 0; b = 0;
             break;
 
-        case 'C': // hole / inward
+        case 'C':
             r = 0; g = 120; b = 255;
             break;
 
@@ -133,109 +395,170 @@ static void color_for_edge_class(
     }
 }
 
+/*
+ * Tiny block font for L, V, C, and ?.
+ * Each glyph is 3x5.
+ */
+static const uint8_t* glyph_for_char(char c) {
+    static const uint8_t glyph_L[5] = {
+        0b100,
+        0b100,
+        0b100,
+        0b100,
+        0b111
+    };
 
-static void draw_char(thrust::host_vector<issued_pixel_t>& pixel_buffer, uint32_t image_width, uint32_t image_height,
-     int x, int y, char c, int scale, uint8_t r, uint8_t g, uint8_t b) {
-    static const uint8_t font_L[7] = {0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b11111};
-    static const uint8_t font_V[7] = {0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01010, 0b00100};
-    static const uint8_t font_C[7] = {0b01110, 0b10001, 0b10000, 0b10000, 0b10000, 0b10001, 0b01110};
+    static const uint8_t glyph_V[5] = {
+        0b101,
+        0b101,
+        0b101,
+        0b101,
+        0b010
+    };
 
-    const uint8_t* bitmap = nullptr;
-    if (c == 'L') bitmap = font_L;
-    else if (c == 'V') bitmap = font_V;
-    else if (c == 'C') bitmap = font_C;
-    else return;
+    static const uint8_t glyph_C[5] = {
+        0b111,
+        0b100,
+        0b100,
+        0b100,
+        0b111
+    };
 
-    for (int i = 0; i < 7; ++i) {
-        for (int j = 0; j < 5; ++j) {
-            if ((bitmap[i] >> (4 - j)) & 1) {
-                // Scale logic: draw a block of pixels for every 1 in the bitmap
-                for (int sy = 0; sy < scale; ++sy) {
-                    for (int sx = 0; sx < scale; ++sx) {
-                        issue_rgb_pixel(pixel_buffer, image_width, image_height, x + (j * scale) + sx, y + (i * scale) + sy, r, g, b);
-                    }
+    static const uint8_t glyph_Q[5] = {
+        0b111,
+        0b001,
+        0b011,
+        0b000,
+        0b010
+    };
+
+    switch (c) {
+        case 'L':
+            return glyph_L;
+        case 'V':
+            return glyph_V;
+        case 'C':
+            return glyph_C;
+        default:
+            return glyph_Q;
+    }
+}
+
+static void draw_char_3x5(
+    std::vector<issued_pixel_t>& pixel_buffer,
+    uint32_t image_width,
+    uint32_t image_height,
+    int x,
+    int y,
+    char c,
+    uint8_t r,
+    uint8_t g,
+    uint8_t b,
+    int scale = 2
+) {
+    const uint8_t* glyph = glyph_for_char(c);
+
+    for (int row = 0; row < 5; ++row) {
+        for (int col = 0; col < 3; ++col) {
+            bool on = (glyph[row] >> (2 - col)) & 1;
+
+            if (!on) {
+                continue;
+            }
+
+            for (int sy = 0; sy < scale; ++sy) {
+                for (int sx = 0; sx < scale; ++sx) {
+                    issue_rgb_pixel(
+                        pixel_buffer,
+                        image_width,
+                        image_height,
+                        x + col * scale + sx,
+                        y + row * scale + sy,
+                        r, g, b
+                    );
                 }
             }
         }
     }
 }
-static void draw_edge_label_string(thrust::host_vector<issued_pixel_t>& pixel_buffer, uint32_t image_width, uint32_t image_height,
-     int x, int y, const std::vector<char>& edges, uint32_t top_edge_index) {
-    int scale = 5;
-    int edge = top_edge_index;
-    // Draw each character
-    for (size_t i = 0; i < edges.size(); ++i) {
 
-        draw_char(pixel_buffer, image_width, image_height, x + (i * 7*scale), y - scale*8, edges[(edge + i) % 4],scale, 255, 255, 255);
+static void draw_edge_label_string(
+    std::vector<issued_pixel_t>& pixel_buffer,
+    uint32_t image_width,
+    uint32_t image_height,
+    int x,
+    int y,
+    const std::vector<char>& edges,
+    uint32_t top_edge_index
+) {
+    if (edges.size() != 4) {
+        return;
+    }
+
+    int cursor_x = x;
+
+    for (uint32_t i = 0; i < 4; ++i) {
+        uint32_t edge_idx = (top_edge_index + i) % 4;
+        char c = edges[edge_idx];
+
+        uint8_t r = 255;
+        uint8_t g = 255;
+        uint8_t b = 255;
+        int scale = 5;
+
+        draw_char_3x5(
+            pixel_buffer,
+            image_width,
+            image_height,
+            cursor_x,
+            y,
+            c,
+            r, g, b,
+            scale
+        );
+
+        cursor_x += 4 * scale;
     }
 }
-
-__global__ void draw_visuals(issued_pixel_t* pixel_buffer, uchar3* image, uint32_t count){
-
-    uint32_t idx = threadIdx.x + blockDim.x*blockIdx.x;
-    if(idx >=count)
-        return;
-
-    issued_pixel_t pixel = pixel_buffer[idx];
-    image[pixel.pixel_index].x = pixel.rgb.x;
-    image[pixel.pixel_index].y = pixel.rgb.y;
-    image[pixel.pixel_index].z = pixel.rgb.z;
-    
-}
-
-
-
 
 void visualizer_exp(
     rgb_image_d_t* original_image_d,
     const std::string& filename,
-    uint32_t image_width, uint32_t image_height,
-    const thrust::device_vector<ContourSignalPointExt>& d_points,
-    const thrust::host_vector <ContourSignalPointExt>& points,
+    uint32_t image_width,
+    uint32_t image_height,
+    const thrust::host_vector<ContourSignalPointExt>& points,
     const thrust::host_vector<PieceCorners>& corners,
-    const thrust::host_vector<ClassifiedPiece>& classified
-
+    const thrust::host_vector<ClassifiedPiece>& classified,
+    visualizer_workspace_t& ws,
+    jpeg_encoder_t& jpeg_encoder
 ) {
-    // rgb_image_t out;
-    // out.width =width;
-    // out.height =height;
-    // out.data.resize(width * height * 3); // this takes forevecer (around 50 ms)
-    // uint32_t width= original_image.width;
-    // uint32_t height = original_image.height;
-    // uint32_t pixel_count= original_image.width * original_image.height;
+    CPU_TIMER_START(visualizer_total);
 
-    
-    // std::unordered_map<uint32_t, const PieceCorners*> corner_lookup;
-    // for (const auto& c : corners) {
-    //     corner_lookup[c.label] = &c;
-    // }
+    std::vector<issued_pixel_t> pixel_buffer;
+    pixel_buffer.reserve(points.size() * 12 + classified.size() * 2500);
+    // pixel_buffer.reserve(classified.size() * 4000);
 
-    
-    // //dark grayscale background --- in a kernel
-    // uint32_t threads = 256;
-    // uint32_t blocks = (pixel_count + threads - 1) / threads;
+    std::unordered_map<uint32_t, const PieceCorners*> corner_lookup;
+    corner_lookup.reserve(corners.size());
 
-    // uint8_t* image_background_d; 
-    // cudaMalloc(&image_background_d, 3 * pixel_count * sizeof(uint8_t));
-    // set_background<<<blocks,threads>>>(image_in_d, image_background_d, pixel_count);
-    // cudaMemcpy(out.data.data(),image_background_d, 3 * pixel_count * sizeof(uint8_t), cudaMemcpyDeviceToHost);
+    for (const auto& c : corners) {
+        corner_lookup[c.label] = &c;
+    }
 
-    thrust::host_vector<issued_pixel_t> pixel_buffer;
-    
+    CPU_TIMER_START(build_visualizer_pixels);
+
     for (const auto& piece : classified) {
         if (!piece.valid || piece.edges.size() != 4) {
             continue;
         }
 
-        const PieceCorners* piece_corners = nullptr;
+        auto it = corner_lookup.find(piece.label);
 
-        //find correct corner for the current piece
-        for (const auto& c : corners) {
-            if (c.label == piece.label) {
-                piece_corners = &c;
-                break;
-            }
+        if (it == corner_lookup.end()) {
+            continue;
         }
+
+        const PieceCorners* piece_corners = it->second;
 
         if (piece_corners == nullptr ||
             !piece_corners->valid ||
@@ -255,38 +578,57 @@ void visualizer_exp(
         uint32_t piece_length =
             points[first_corner_idx].piece_length;
 
-        if (piece_length == 0 || piece_start + piece_length > points.size()) {
+        if (piece_length == 0 ||
+            piece_start + piece_length > points.size()) {
             continue;
         }
 
-
-
-        float min_x = 1e10f, max_x = -1e10f;
-        float min_y = 1e10f, max_y = -1e10f;
+        uint32_t min_x = image_width;
+        uint32_t min_y = image_height;
+        uint32_t max_x = 0;
+        uint32_t max_y = 0;
 
         for (uint32_t i = 0; i < piece_length; ++i) {
             const auto& p = points[piece_start + i];
-            if (p.x < min_x) min_x = p.x;
-            if (p.x > max_x) max_x = p.x;
-            if (p.y < min_y) min_y = p.y;
-            if (p.y > max_y) max_y = p.y;
+
+            min_x = std::min(min_x, p.x);
+            min_y = std::min(min_y, p.y);
+            max_x = std::max(max_x, p.x);
+            max_y = std::max(max_y, p.y);
         }
 
-        // Draw the bounding box (e.g., White or Gray)
-        // We add a small 2-pixel padding so it doesn't overlap the contour exactly
-        draw_rect_outline(pixel_buffer, image_width, image_height,
-            (int)min_x - 2, (int)min_y - 2, 
-            (int)max_x + 2, (int)max_y + 2, 
-            0, 255, 0); 
+        draw_rect_outline(
+            pixel_buffer,
+            image_width,
+            image_height,
+            static_cast<int>(min_x) - 2,
+            static_cast<int>(min_y) - 2,
+            static_cast<int>(max_x) + 2,
+            static_cast<int>(max_y) + 2,
+            0, 255, 0
+        );
 
-        uint8_t last_corner_index= piece_corners->point_indices[3];
-        uint8_t top_edge_index = 3;
+        uint32_t c0 = first_corner_idx;
+        uint32_t c1 = piece_corners->point_indices[1];
+        uint32_t c3 = piece_corners->point_indices[3];
+        uint32_t top_edge_index = 3;
 
-        //wenn der 1. corner in dem vektor die root ist und der x index vom 1. corner nicht größer als der vom letzten corner ist dann 
-        if(points[first_corner_idx].rank == 0 && points[first_corner_idx].x < points[last_corner_index].x)
-            top_edge_index = 0;
-            
-        draw_edge_label_string(pixel_buffer, image_width, image_height, (int)min_x, (int)min_y - 10, piece.edges, top_edge_index);
+        if (c1 < points.size()) {
+            if (points[c1].y < points[c3].y) {
+                top_edge_index = 0;
+            }
+        }
+
+        draw_edge_label_string(
+            pixel_buffer,
+            image_width,
+            image_height,
+            static_cast<int>(min_x),
+            static_cast<int>(min_y) - 35,
+            piece.edges,
+            top_edge_index
+        );
+#ifdef DRAW_COLORED_EDGES
 
         for (uint32_t edge = 0; edge < 4; ++edge) {
             uint32_t a_idx = piece_corners->point_indices[edge];
@@ -305,7 +647,6 @@ void visualizer_exp(
             uint8_t r, g, b;
             color_for_edge_class(piece.edges[edge], r, g, b);
 
-            // draw all contour points belonging to this edge
             for (uint32_t d = 0; d <= edge_len; ++d) {
                 uint32_t rank = (rank_a + d) % piece_length;
                 uint32_t idx = piece_start + rank;
@@ -316,39 +657,87 @@ void visualizer_exp(
 
                 const auto& p = points[idx];
 
-                // slightly thick contour line
                 draw_square(
-                    pixel_buffer, image_width, image_height,
+                    pixel_buffer,
+                    image_width,
+                    image_height,
                     static_cast<int>(p.x),
                     static_cast<int>(p.y),
                     1,
                     r, g, b
                 );
             }
-
-            // draw corners in green on top
-            const auto& a = points[a_idx];
-            const auto& bpt = points[b_idx];
-
-            draw_square(pixel_buffer, image_width, image_height, a.x, a.y, 4, 0, 255, 0);
-            draw_square(pixel_buffer, image_width, image_height, bpt.x, bpt.y, 4, 0, 255, 0);
         }
+#endif
+#ifdef DRAW_CORNERS
+
+        for (uint32_t corner_idx : piece_corners->point_indices) {
+            if (corner_idx >= points.size()) {
+                continue;
+            }
+
+            const auto& p = points[corner_idx];
+
+            draw_square(
+                pixel_buffer,
+                image_width,
+                image_height,
+                static_cast<int>(p.x),
+                static_cast<int>(p.y),
+                4,
+                0, 255, 0
+            );
+        }
+#endif
     }
 
-    thrust::device_vector<issued_pixel_t> pixel_buffer_d = pixel_buffer;
+    CPU_TIMER_STOP(build_visualizer_pixels, "Build visualizer pixel buffer");
 
-    uint32_t threads= 256;
-    uint32_t blocks = (pixel_buffer.size()+ threads - 1)/threads;
+    // uchar3* d_image = original_image_d->data;
 
-    draw_visuals<<<blocks,threads>>>(thrust::raw_pointer_cast(pixel_buffer_d.data()), thrust::raw_pointer_cast(original_image_d->data.data()), pixel_buffer.size());
+    // GPU_TIMER_START(draw_visual_pixels);
+    // upload_and_draw_pixels(ws, pixel_buffer, d_image);
+    // GPU_TIMER_STOP(draw_visual_pixels, "Draw visual pixels");
 
-    cudaDeviceSynchronize();
+    // CPU_TIMER_START(save_visualized_image);
+    // save_image_nvjpeg_reuse(
+    //     jpeg_encoder,
+    //     filename,
+    //     d_image,
+    //     image_width,
+    //     image_height
+    // );
+    // CPU_TIMER_STOP(save_visualized_image, "Save visualized image");
 
-    save_image_nvjpeg(filename, 
-                      thrust::raw_pointer_cast(original_image_d->data.data()), 
-                      image_width, 
-                      image_height);
+    // CPU_TIMER_STOP(visualizer_total, "Visualizer total");
 
+    size_t num_pixels = static_cast<size_t>(image_width) * static_cast<size_t>(image_height);
 
-    return;
+    ensure_image_copy_capacity(ws, num_pixels);
+
+    check_cuda(
+        cudaMemcpy(
+            ws.d_image_copy,
+            original_image_d->data,
+            num_pixels * sizeof(uchar3),
+            cudaMemcpyDeviceToDevice
+        ),
+        "cudaMemcpy visualizer image copy"
+    );
+
+    uchar3* d_image = ws.d_image_copy;
+
+    GPU_TIMER_START(draw_visual_pixels);
+    upload_and_draw_pixels(ws, pixel_buffer, d_image);
+    GPU_TIMER_STOP(draw_visual_pixels, "Draw visual pixels");
+
+    CPU_TIMER_START(save_visualized_image);
+    save_image_nvjpeg_reuse(
+        jpeg_encoder,
+        filename,
+        d_image,
+        image_width,
+        image_height
+    );
+    CPU_TIMER_STOP(save_visualized_image, "Save visualized image");
 }

@@ -4,6 +4,7 @@
 #include <thrust/host_vector.h>
 
 #include "centroid.cuh"
+#include "pipeline_workspace.hpp"
 
 struct ContourSignalPoint {
     float distance;
@@ -18,5 +19,6 @@ thrust::device_vector<ContourSignalPoint> sort_distances(
     const uint32_t* d_ranks,
     const thrust::device_vector<Centroid>& d_centroids,
     uint32_t width,
-    uint32_t height
+    uint32_t height,
+    pipeline_workspace_t& ws
 );

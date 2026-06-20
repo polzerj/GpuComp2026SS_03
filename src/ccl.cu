@@ -7,6 +7,7 @@
 #include <cstdint>
 #include "types.hpp"
 #include "timer.hpp"
+#include "ccl.cuh"
 // keep X at 32/4 unless you want to change the launch bounds for the reduction kernel (see original implementation)
 #define BLOCK_WIDTH_X 32
 #define BLOCK_WIDTH_Y 4
@@ -247,11 +248,12 @@ __global__ void block_border_reduction_y(uint32_t *global_labels, uint8_t *globa
     }
 }
 
-uint32_t *playne_ccl(uint8_t *d_image, uint32_t width, uint32_t height)
+uint32_t *playne_ccl(uint8_t *d_image, uint32_t width, uint32_t height, pipeline_workspace_t& ws)
 {
 
     // setup all the necessary memory on device and host
     uint32_t pixel_count = width * height;
+     ws.d_ccl_labels.ensure(pixel_count);
 
     // Create Grid/Block
     dim3 block(BLOCK_WIDTH_X, BLOCK_WIDTH_Y); // keep at 32/4
@@ -261,11 +263,12 @@ uint32_t *playne_ccl(uint8_t *d_image, uint32_t width, uint32_t height)
     dim3 border_grid_x(ceil(height / (float)block.x), ceil(grid.x / (float)block.y));
     dim3 border_grid_y(ceil(width / (float)block.x), ceil(grid.y / (float)block.y));
 
-    uint32_t *d_labels;
+    //uint32_t *d_labels;
+    uint32_t* d_labels = ws.d_ccl_labels.data();
     // uint8_t   *d_image;
 
     // Allocate device memory
-    cudaMalloc((void **)&d_labels, pixel_count * sizeof(uint32_t));
+    //cudaMalloc((void **)&d_labels, pixel_count * sizeof(uint32_t));
     // cudaMalloc((void**) &d_image,  pixel_count * sizeof(uint8_t));
 
     // cudaMemcpy(d_image, grayImage.data.data(), pixel_count*sizeof(uint8_t), cudaMemcpyHostToDevice);

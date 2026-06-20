@@ -1,5 +1,5 @@
 NVCC := nvcc
-NVCC_FLAGS += -O3 --extended-lambda -rdc=true 
+NVCC_FLAGS += -O3 --extended-lambda -rdc=true -DENABLE_TIMING
 COMPILER_OPTIONS += -Wall -Wextra
 INCLUDES += -Iinclude 
 LIBS += -lnvjpeg -lcudadevrt

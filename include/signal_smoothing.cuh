@@ -1,5 +1,11 @@
 #pragma once
+
+#include <cstdint>
+
+#include <thrust/device_vector.h>
+
 #include "sort_distances.cuh"
+#include "pipeline_workspace.hpp"
 
 struct ContourSignalPointExt {
     float distance;
@@ -10,5 +16,8 @@ struct ContourSignalPointExt {
     uint32_t piece_length;
 };
 
-thrust::device_vector<ContourSignalPointExt> smooth_signal(const thrust::host_vector<ContourSignalPoint>& h_points,  thrust::device_vector<ContourSignalPoint>& d_input,
-    uint32_t smoothing_radius);
+thrust::device_vector<ContourSignalPointExt> smooth_signal(
+    const thrust::device_vector<ContourSignalPoint>& d_input,
+    uint32_t smoothing_radius,
+    pipeline_workspace_t& ws
+);

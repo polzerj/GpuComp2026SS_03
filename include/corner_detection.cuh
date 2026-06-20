@@ -1,6 +1,7 @@
 #pragma once
 #include "sort_distances.cuh"
 #include "signal_smoothing.cuh"
+#include "pipeline_workspace.hpp"
 
 struct PieceCorners {
     uint32_t label;
@@ -10,5 +11,4 @@ struct PieceCorners {
 };
 
 thrust::host_vector<PieceCorners> detect_corners(thrust::host_vector<ContourSignalPointExt>& h_smoothed, thrust::device_vector<ContourSignalPointExt>& d_smoothed,
-    uint32_t peak_detection_radius, float prominence_threshold, uint32_t distance_threshold);
-
+    uint32_t peak_detection_radius, float prominence_threshold, uint32_t distance_threshold, pipeline_workspace_t& ws);
