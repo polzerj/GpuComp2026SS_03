@@ -536,6 +536,7 @@ void visualizer_exp(
 
     std::vector<issued_pixel_t> pixel_buffer;
     pixel_buffer.reserve(points.size() * 12 + classified.size() * 2500);
+    // pixel_buffer.reserve(classified.size() * 4000);
 
     std::unordered_map<uint32_t, const PieceCorners*> corner_lookup;
     corner_lookup.reserve(corners.size());
@@ -607,12 +608,13 @@ void visualizer_exp(
             0, 255, 0
         );
 
-        uint32_t last_corner_idx = piece_corners->point_indices[3];
+        uint32_t c0 = first_corner_idx;
+        uint32_t c1 = piece_corners->point_indices[1];
+        uint32_t c3 = piece_corners->point_indices[3];
         uint32_t top_edge_index = 3;
 
-        if (last_corner_idx < points.size()) {
-            if (points[first_corner_idx].rank == 0 &&
-                points[first_corner_idx].x < points[last_corner_idx].x) {
+        if (c1 < points.size()) {
+            if (points[c1].y < points[c3].y) {
                 top_edge_index = 0;
             }
         }

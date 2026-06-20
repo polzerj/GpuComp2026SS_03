@@ -440,8 +440,9 @@ void process_image(std::string &image_path, pipeline_workspace_t& ws, visualizer
 
 int main(int argc, char *argv[])
 {
-    cudaSetDeviceFlags(cudaDeviceScheduleSpin);
+    const auto total_start = std::chrono::high_resolution_clock::now();
     GLOBAL_TIMER_START(total_execution);
+    cudaSetDeviceFlags(cudaDeviceScheduleSpin);
     pipeline_workspace_t ws{};
     visualizer_workspace_t vis_ws{};
     jpeg_decoder_t jpeg_decoder{};
@@ -485,5 +486,19 @@ int main(int argc, char *argv[])
     destroy_jpeg_encoder(jpeg_encoder);
 
     GLOBAL_TIMER_STOP(total_execution, "Total Execution Time");
+        const auto total_end =
+        std::chrono::high_resolution_clock::now();
+
+    const double total_ms =
+        std::chrono::duration<double, std::milli>(
+            total_end - total_start
+        ).count();
+
+    std::printf(
+        "[cpu] %-45s %10.3f ms\n",
+        "Total Execution Time",
+        total_ms
+    );
+
     return 0;
 }

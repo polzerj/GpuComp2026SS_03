@@ -10,17 +10,17 @@
 struct pipeline_workspace_t {
     size_t pixel_capacity = 0;
 
-    device_buffer_t<uint8_t> d_u8_a;
-    device_buffer_t<uint8_t> d_u8_b;
-    device_buffer_t<uint8_t> d_u8_c;
+    // device_buffer_t<uint8_t> d_u8_a;
+    // device_buffer_t<uint8_t> d_u8_b;
+    // device_buffer_t<uint8_t> d_u8_c;
 
-    device_buffer_t<float> d_float_a;
-    device_buffer_t<float> d_float_b;
+    // device_buffer_t<float> d_float_a;
+    // device_buffer_t<float> d_float_b;
 
-    device_buffer_t<uint32_t> d_u32_a;
-    device_buffer_t<uint32_t> d_u32_b;
-    device_buffer_t<uint32_t> d_u32_c;
-    device_buffer_t<uint32_t> d_u32_d;
+    // device_buffer_t<uint32_t> d_u32_a;
+    // device_buffer_t<uint32_t> d_u32_b;
+    // device_buffer_t<uint32_t> d_u32_c;
+    // device_buffer_t<uint32_t> d_u32_d;
     
     device_buffer_t<uchar3> d_rgb;
     device_buffer_t<float> d_gray;
@@ -75,17 +75,17 @@ struct pipeline_workspace_t {
         d_blur.ensure(pixel_count);
         d_binary.ensure(pixel_count);
 
-        d_u8_a.ensure(pixel_count);
-        d_u8_b.ensure(pixel_count);
-        d_u8_c.ensure(pixel_count);
+        // d_u8_a.ensure(pixel_count);
+        // d_u8_b.ensure(pixel_count);
+        // d_u8_c.ensure(pixel_count);
 
-        d_float_a.ensure(pixel_count);
-        d_float_b.ensure(pixel_count);
+        // d_float_a.ensure(pixel_count);
+        // d_float_b.ensure(pixel_count);
 
-        d_u32_a.ensure(pixel_count);
-        d_u32_b.ensure(pixel_count);
-        d_u32_c.ensure(pixel_count);
-        d_u32_d.ensure(pixel_count);
+        // d_u32_a.ensure(pixel_count);
+        // d_u32_b.ensure(pixel_count);
+        // d_u32_c.ensure(pixel_count);
+        // d_u32_d.ensure(pixel_count);
 
         d_work_a.ensure(pixel_count);
         d_work_b.ensure(pixel_count);
