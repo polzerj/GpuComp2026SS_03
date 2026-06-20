@@ -16,8 +16,8 @@ def process(image_path: Path) -> None:
     binary_image = preprocessing_main(image_path)
     time_taken = time.time() - start
     with open(benchmark_file, "a") as f:
-        f.write(f"{image_path.name} - Preprocessing: {time_taken:.2f} seconds\n")
-    print(f"Time taken for preprocessing: {time_taken:.2f} seconds")
+        f.write(f"{image_path.name} - Preprocessing: {time_taken:.6f} seconds\n")
+    print(f"Time taken for preprocessing: {time_taken:.6f} seconds")
 
     start = time.time()
     boundary_image = boundary_detection_main(
@@ -25,8 +25,8 @@ def process(image_path: Path) -> None:
     )
     time_taken = time.time() - start
     with open(benchmark_file, "a") as f:
-        f.write(f"{image_path.name} - Boundary Detection: {time_taken:.2f} seconds\n")
-    print(f"Time taken for boundary detection: {time_taken:.2f} seconds")
+        f.write(f"{image_path.name} - Boundary Detection: {time_taken:.6f} seconds\n")
+    print(f"Time taken for boundary detection: {time_taken:.6f} seconds")
 
     start = time.time()
     smooth_points, px, py = contour_to_signal_main(
@@ -34,8 +34,8 @@ def process(image_path: Path) -> None:
     )
     time_taken = time.time() - start
     with open(benchmark_file, "a") as f:
-        f.write(f"{image_path.name} - Contour to Signal: {time_taken:.2f} seconds\n")
-    print(f"Time taken for contour to signal: {time_taken:.2f} seconds")
+        f.write(f"{image_path.name} - Contour to Signal: {time_taken:.6f} seconds\n")
+    print(f"Time taken for contour to signal: {time_taken:.6f} seconds")
 
     start = time.time()
     classified_piece = piece_classification_main(
@@ -43,8 +43,8 @@ def process(image_path: Path) -> None:
     )
     time_taken = time.time() - start
     with open(benchmark_file, "a") as f:
-        f.write(f"{image_path.name} - Piece Classification: {time_taken:.2f} seconds\n")
-    print(f"Time taken for piece classification: {time_taken:.2f} seconds")
+        f.write(f"{image_path.name} - Piece Classification: {time_taken:.6f} seconds\n")
+    print(f"Time taken for piece classification: {time_taken:.6f} seconds")
 
     start = time.time()
     visualize_piece(
@@ -56,8 +56,8 @@ def process(image_path: Path) -> None:
     )
     time_taken = time.time() - start
     with open(benchmark_file, "a") as f:
-        f.write(f"{image_path.name} - Visualization: {time_taken:.2f} seconds\n")
-    print(f"Time taken for visualization: {time_taken:.2f} seconds")
+        f.write(f"{image_path.name} - Visualization: {time_taken:.6f} seconds\n")
+    print(f"Time taken for visualization: {time_taken:.6f} seconds")
 
 
 def main() -> None:
@@ -78,11 +78,11 @@ def main() -> None:
 
             time_taken = time.time() - individual_start
             with open(benchmark_file, "a") as f:
-                f.write(f"{image}: {time_taken:.2f} seconds\n")
-            print(f"Time taken for {image}: {time_taken:.2f} seconds")
+                f.write(f"{image}: {time_taken:.6f} seconds\n")
+            print(f"Time taken for {image}: {time_taken:.6f} seconds")
 
     print()
-    print(f"Total time taken: {time.time() - complete_start:.2f} seconds")
+    print(f"Total time taken: {time.time() - complete_start:.6f} seconds")
 
 
 if __name__ == "__main__":
