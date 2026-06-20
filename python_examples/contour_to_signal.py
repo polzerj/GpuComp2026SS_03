@@ -190,107 +190,134 @@ def find_triangular_peaks(
     return list(selected), [signal[i] for i in selected], s
 
 
-boundary = load_grayscale_image(IMAGE_DIR / "processed" / "boundary.png")
-show_img(boundary)
+def main(
+    boundary_image: np.ndarray | None = None,
+    show_images: bool = False,
+    save_images: bool = False,
+) -> np.ndarray:
+    if boundary_image is None:
+        boundary = load_grayscale_image(IMAGE_DIR / "processed" / "boundary.png")
+    else:
+        boundary = boundary_image
 
-contour = find_contour_chain_approx_simple(boundary)
-points = [(int(x), int(y)) for x, y in contour]
+    if show_images:
+        show_img(boundary)
 
-smooth_points = smooth_contour(points, window=5)
-center, radius = enclosing_circle_approx(smooth_points)
-print("center:", center)
-print("radius", radius)
+    contour = find_contour_chain_approx_simple(boundary)
+    points = [(int(x), int(y)) for x, y in contour]
 
-fig, ax = plt.subplots(figsize=(10, 10 / 1000 * 727))
+    smooth_points = smooth_contour(points, window=5)
+    center, radius = enclosing_circle_approx(smooth_points)
+    # print("center:", center)
+    # print("radius", radius)
 
-display_boundary = boundary.copy()
+    if save_images or show_images:
+        fig, ax = plt.subplots(figsize=(10, 10 / 1000 * 727))
 
-if display_boundary.max() <= 1:
-    display_boundary = display_boundary * 255
+        display_boundary = boundary.copy()
 
-ax.imshow(display_boundary, cmap="gray", vmin=0, vmax=255)
+        if display_boundary.max() <= 1:
+            display_boundary = display_boundary * 255
 
-ax.axis("off")
+        ax.imshow(display_boundary, cmap="gray", vmin=0, vmax=255)
 
-# Draw contour
-xs = [p[0] for p in points]
-ys = [p[1] for p in points]
+        ax.axis("off")
 
-ax.plot(xs, ys, linewidth=1)
+        # Draw contour
+        xs = [p[0] for p in points]
+        ys = [p[1] for p in points]
 
-# Draw smoothed contour
-xs_s = [p[0] for p in smooth_points]
-ys_s = [p[1] for p in smooth_points]
-ax.plot(xs_s, ys_s, linewidth=2)
+        ax.plot(xs, ys, linewidth=1)
 
-# Draw enclosing circle
-circle = plt.Circle(center, radius, fill=False, linewidth=2, color="green")
-ax.add_patch(circle)
+        # Draw smoothed contour
+        xs_s = [p[0] for p in smooth_points]
+        ys_s = [p[1] for p in smooth_points]
+        ax.plot(xs_s, ys_s, linewidth=2)
 
-# Draw center
-ax.scatter(center[0], center[1], s=30)
-plt.savefig(
-    IMAGE_DIR / "processed" / "contour_circle.png",
-    bbox_inches="tight",
-    pad_inches=0,
-    dpi=300,
-)
-plt.show()
+        # Draw enclosing circle
+        circle = plt.Circle(center, radius, fill=False, linewidth=2, color="green")
+        ax.add_patch(circle)
 
-signal = radial_signal(smooth_points, center)
+        # Draw center
+        ax.scatter(center[0], center[1], s=30)
 
-plt.figure(figsize=(12, 4))
-plt.plot(signal)
-plt.title("Segnale radiale del contorno")
-plt.xlabel("Indice punto contorno")
-plt.ylabel("Distanza dal centro")
-plt.grid(True)
-plt.show()
+    if save_images:
+        plt.savefig(
+            IMAGE_DIR / "processed" / "contour_circle.png",
+            bbox_inches="tight",
+            pad_inches=0,
+            dpi=300,
+        )
 
-peaks_idx, peaks_val, smooth = find_triangular_peaks(
-    signal, min_distance=5, min_prominence=5, smooth_window=2, min_sharpness=20
-)
+    if show_images:
+        plt.show()
 
-peaks_idx = [x for x in peaks_idx if x != 1]
-peaks_val = [signal[i] for i in peaks_idx]
+    signal = radial_signal(smooth_points, center)
 
-# Remove first peak
-# peaks_idx = peaks_idx[1:]
-# Recompute values
-# peaks_val = [signal[i] for i in peaks_idx]
+    if show_images:
+        plt.figure(figsize=(12, 4))
+        plt.plot(signal)
+        plt.title("Segnale radiale del contorno")
+        plt.xlabel("Indice punto contorno")
+        plt.ylabel("Distanza dal centro")
+        plt.grid(True)
+        plt.show()
 
-plt.figure(figsize=(14, 5))
-plt.plot(signal)
+    peaks_idx, peaks_val, smooth = find_triangular_peaks(
+        signal, min_distance=5, min_prominence=5, smooth_window=2, min_sharpness=20
+    )
 
-plt.scatter(peaks_idx, peaks_val, marker="o")
+    peaks_idx = [x for x in peaks_idx if x != 1]
+    peaks_val = [signal[i] for i in peaks_idx]
 
-plt.grid(True)
-plt.show()
+    # Remove first peak
+    # peaks_idx = peaks_idx[1:]
+    # Recompute values
+    # peaks_val = [signal[i] for i in peaks_idx]
+
+    peak_points = [smooth_points[i] for i in peaks_idx]
+    px = [p[0] for p in peak_points]
+    py = [p[1] for p in peak_points]
+
+    if show_images or save_images:
+        plt.figure(figsize=(14, 5))
+        plt.plot(signal)
+
+        plt.scatter(peaks_idx, peaks_val, marker="o")
+
+        plt.grid(True)
+        plt.show()
+
+        fig, ax = plt.subplots(figsize=(10, 10 / 1000 * 727))
+        ax.imshow(display_boundary, cmap="gray", vmin=0, vmax=255)
+        ax.axis("off")
+
+        # Contorno smooth
+        ax.plot(xs_s, ys_s, linewidth=2, color="orange")
+
+        # Cerchio
+        circle = plt.Circle(center, radius, fill=False, linewidth=2, color="green")
+        ax.add_patch(circle)
+
+        # Centro
+        ax.scatter(center[0], center[1], s=30, color="blue")
+
+        # Picchi sul contorno
+        ax.scatter(px, py, s=80, color="red")
+
+    if save_images:
+        plt.savefig(
+            IMAGE_DIR / "processed" / "contour_circle_peaks.png",
+            bbox_inches="tight",
+            pad_inches=0,
+            dpi=300,
+        )
+
+    if show_images:
+        plt.show()
+
+    return smooth_points, px, py
 
 
-fig, ax = plt.subplots(figsize=(10, 10 / 1000 * 727))
-ax.imshow(display_boundary, cmap="gray", vmin=0, vmax=255)
-ax.axis("off")
-
-# Contorno smooth
-ax.plot(xs_s, ys_s, linewidth=2, color="orange")
-
-# Cerchio
-circle = plt.Circle(center, radius, fill=False, linewidth=2, color="green")
-ax.add_patch(circle)
-
-# Centro
-ax.scatter(center[0], center[1], s=30, color="blue")
-
-# Picchi sul contorno
-peak_points = [smooth_points[i] for i in peaks_idx]
-px = [p[0] for p in peak_points]
-py = [p[1] for p in peak_points]
-ax.scatter(px, py, s=80, color="red")
-plt.savefig(
-    IMAGE_DIR / "processed" / "contour_circle_peaks.png",
-    bbox_inches="tight",
-    pad_inches=0,
-    dpi=300,
-)
-plt.show()
+if __name__ == "__main__":
+    main()

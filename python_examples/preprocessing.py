@@ -28,8 +28,8 @@ def create_gaussian_kernel(size=8, sigma=1.0) -> np.ndarray:
     xx, yy = np.meshgrid(ax, ax)
     kernel = np.exp(-(xx**2 + yy**2) / (2 * sigma**2))
     kernel = kernel / np.sum(kernel)
-    print(f"Gaussian Kernel (size={size}, sigma={sigma}):\n{kernel}")
-    print(f"Kernel size: {kernel.shape}, Sum: {kernel.sum()}")
+    # print(f"Gaussian Kernel (size={size}, sigma={sigma}):\n{kernel}")
+    # print(f"Kernel size: {kernel.shape}, Sum: {kernel.sum()}")
     return kernel
 
 
@@ -100,13 +100,28 @@ def otsu_threshold(image: np.ndarray) -> tuple[np.ndarray, int]:
     return binary.astype(np.uint8) * 255, threshold
 
 
-image = load_grayscale_image(IMAGE_DIR / "input-example-tuwel.jpg")
+def main(
+    image_path: Path, show_images: bool = False, save_images: bool = False
+) -> np.ndarray:
+    image = load_grayscale_image(image_path)
 
-show_img(image)
+    if show_images:
+        show_img(image)
 
-blurred = gaussian_filter(image, sigma=1)
-plt.imsave(IMAGE_DIR / "processed" / "blurredcol.png", blurred, cmap="gray")
-binary, threshold_value = otsu_threshold(blurred)
+    blurred = gaussian_filter(image, sigma=1)
+    if save_images:
+        plt.imsave(IMAGE_DIR / "processed" / "blurredcol.png", blurred, cmap="gray")
+    binary, threshold_value = otsu_threshold(blurred)
 
-show_img(binary)
-plt.imsave(IMAGE_DIR / "processed" / "binarycol.png", binary, cmap="gray")
+    if show_images:
+        print(f"Otsu threshold value: {threshold_value}")
+        show_img(binary)
+
+    if save_images:
+        plt.imsave(IMAGE_DIR / "processed" / "binarycol.png", binary, cmap="gray")
+
+    return binary
+
+
+if __name__ == "__main__":
+    main(IMAGE_DIR / "input-example-tuwel.jpg", save_images=True)
