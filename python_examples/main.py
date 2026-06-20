@@ -62,9 +62,11 @@ def process(image_path: Path) -> None:
 
 def main() -> None:
     benchmark_file = "benchmark.txt"
+    with open(benchmark_file, "w") as f:
+        f.write("Benchmark Results:\n")
+        f.write("==================\n")
 
     process(Path("../data") / "single.JPG")
-    return
 
     complete_start = time.time()
     images = os.listdir("../data")
