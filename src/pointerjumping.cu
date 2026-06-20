@@ -526,7 +526,48 @@ __global__ void unpack_data(const uint2* src, uint32_t* p, uint32_t* r, uint32_t
 //     return out;
 // }
 
-ptr_jmp_out_t pointer_jumping(uint32_t *global_labels, uint32_t image_width, uint32_t image_height, pipeline_workspace_t& ws)
+__global__ void walk_boundary_pieces_kernel(
+    const uint32_t* __restrict__ boundaries,
+    const uint32_t* __restrict__ successors,
+    uint32_t* __restrict__ ranks,
+    uint32_t pixel_count)
+{
+    uint32_t id = blockIdx.x * blockDim.x + threadIdx.x;
+    if (id >= pixel_count) return;
+
+    uint32_t label = boundaries[id];
+
+    // Only the 'Root' (id == label) of a component starts the walk.
+    // In your system, labels are the ID of the top-left pixel of the component.
+    if (label == 0 || id != label) return;
+
+    uint32_t curr = successors[id];
+    uint32_t dist = 1;
+    
+    // The root itself is rank 0
+    ranks[id] = 0;
+
+    // Traverse the chain
+    // The init kernel creates a loop for closed boundaries.
+    // We walk until we return to the start ID or hit NIL.
+    while (curr != id && curr != NIL) {
+        ranks[curr] = dist++;
+        
+        // Use __ldg to exploit the Read-Only/Texture cache for pointer chasing
+        uint32_t next = __ldg(&successors[curr]);
+        
+        // Safety: break if we hit a self-loop or dead end
+        if (next == curr || next == NIL) break;
+        
+        curr = next;
+
+        // Massive safety break (prevents infinite GPU kernels on data errors)
+        if (dist > 65535) break; 
+    }
+}
+
+
+ptr_jmp_out_t pointer_jumping_old(uint32_t *global_labels, uint32_t image_width, uint32_t image_height, pipeline_workspace_t& ws)
 {
     uint32_t pixel_count = image_height * image_width;
     size_t bytes = pixel_count * sizeof(uint32_t);
@@ -611,6 +652,49 @@ ptr_jmp_out_t pointer_jumping(uint32_t *global_labels, uint32_t image_width, uin
     // cudaFree(d_work_a);
     // cudaFree(d_work_b);
     // cudaFree(d_done);
+
+    return out;
+}
+
+
+//sequential list ranking
+ptr_jmp_out_t pointer_jumping(uint32_t *global_labels, uint32_t image_width, uint32_t image_height, pipeline_workspace_t& ws)
+{
+    uint32_t pixel_count = image_height * image_width;
+    size_t bytes = pixel_count * sizeof(uint32_t);
+    
+    dim3 block2d(BLOCK_WIDTH_X, BLOCK_WIDTH_Y);
+    dim3 grid2d((image_width + block2d.x - 1) / block2d.x, (image_height + block2d.y - 1) / block2d.y);
+    
+    int threads1d = 256;
+    int blocks1d = (pixel_count + threads1d - 1) / threads1d;
+
+    // Workspace allocation
+    ws.d_ptr_boundaries.ensure(pixel_count);
+    ws.d_ptr_ranks.ensure(pixel_count);
+    ws.d_ptr_successors.ensure(pixel_count);
+
+    ptr_jmp_out_t out;
+    out.boundaries = ws.d_ptr_boundaries.data();
+    out.ranks = ws.d_ptr_ranks.data();
+    out.successors = ws.d_ptr_successors.data();
+
+    // Reset ranks to 0
+    cudaMemset(out.ranks, 0, bytes);
+
+    // Step 1: Extract boundaries and identify immediate successors (neighbors)
+    DETAILED_TIMER_START(init_list);
+    init_pointer_list_and_extract_boundaries<<<grid2d, block2d>>>(global_labels, image_width, image_height, out);
+    DETAILED_TIMER_STOP(init_list, "Extract boundaries and successors");
+
+    // Step 2: One thread per piece walk
+    // This replaces the pointer-jumping loop entirely.
+    DETAILED_TIMER_START(piece_walk);
+    walk_boundary_pieces_kernel<<<blocks1d, threads1d>>>(
+        out.boundaries, out.successors, out.ranks, pixel_count
+    );
+    cudaDeviceSynchronize();
+    DETAILED_TIMER_STOP(piece_walk, "Piece-wise Boundary Walk");
 
     return out;
 }
