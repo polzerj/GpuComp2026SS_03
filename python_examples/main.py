@@ -10,6 +10,9 @@ from visualizer import visualize_piece
 
 
 def process(image_path: Path) -> None:
+    print(f"Processing {image_path.name}...")
+    individual_start = time.time()
+
     benchmark_file = "benchmark.txt"
 
     start = time.time()
@@ -36,6 +39,7 @@ def process(image_path: Path) -> None:
     with open(benchmark_file, "a") as f:
         f.write(f"{image_path.name} - Contour to Signal: {time_taken:.6f} seconds\n")
     print(f"Time taken for contour to signal: {time_taken:.6f} seconds")
+    print(len(smooth_points), "smooth points extracted from boundary")
 
     start = time.time()
     classified_piece = piece_classification_main(
@@ -59,6 +63,11 @@ def process(image_path: Path) -> None:
         f.write(f"{image_path.name} - Visualization: {time_taken:.6f} seconds\n")
     print(f"Time taken for visualization: {time_taken:.6f} seconds")
 
+    time_taken = time.time() - individual_start
+    with open(benchmark_file, "a") as f:
+        f.write(f"{image_path.name}: {time_taken:.6f} seconds\n")
+    print(f"Time taken for {image_path.name}: {time_taken:.6f} seconds")
+
 
 def main() -> None:
     benchmark_file = "benchmark.txt"
@@ -67,19 +76,13 @@ def main() -> None:
         f.write("==================\n")
 
     process(Path("../data") / "single.JPG")
+    process(Path("../data") / "3_p2.jpg")
 
     complete_start = time.time()
     images = os.listdir("../data")
     for image in images:
         if image.endswith(".jpg"):
-            print(f"Processing {image}...")
-            individual_start = time.time()
             process(Path("../data") / image)
-
-            time_taken = time.time() - individual_start
-            with open(benchmark_file, "a") as f:
-                f.write(f"{image}: {time_taken:.6f} seconds\n")
-            print(f"Time taken for {image}: {time_taken:.6f} seconds")
 
     print()
     print(f"Total time taken: {time.time() - complete_start:.6f} seconds")
