@@ -67,8 +67,6 @@ def main() -> None:
         f.write("==================\n")
 
     process(Path("../data") / "single.JPG")
-    process(Path("../data") / "3_p2 (Copy).jpg")
-    return
 
     complete_start = time.time()
     images = os.listdir("../data")

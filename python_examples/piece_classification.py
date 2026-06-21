@@ -15,6 +15,7 @@ from contour_to_signal import (
     load_grayscale_image,
     radial_signal,
     trace_contour,
+    smooth_contour,
 )
 
 IMAGE_DIR = Path(__file__).parent.parent.parent / "data"
