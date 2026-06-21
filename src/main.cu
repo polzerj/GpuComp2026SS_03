@@ -298,7 +298,7 @@ void process_image(std::string &image_path, pipeline_workspace_t& ws, visualizer
     rgb_image_d_t original_image_d = preprocessing(image_path, d_binary_image, ws, jpeg_decoder);
     DEBUG_TIMER_STOP(preprocessing, "Preprocessing");
 
-    std::cout << "Image loaded and converted to grayscale with size " << original_image_d.width << "x" << original_image_d.height << "." << std::endl;
+    std::cout << "Image " << image_path << " loaded and converted to grayscale with size " << original_image_d.width << "x" << original_image_d.height << "." << std::endl;
 
     uint32_t image_width = original_image_d.width;
     uint32_t image_height = original_image_d.height;
@@ -364,7 +364,7 @@ void process_image(std::string &image_path, pipeline_workspace_t& ws, visualizer
     //  SMOOTHING SIGNALS
     //------------------------------------------------------
     DEBUG_TIMER_START(smoothing);
-    uint32_t smoothing_radius = 8; // 4 is magic value -- if increased too much corners are hard to detect
+    uint32_t smoothing_radius = 2; // 4 is magic value -- if increased too much corners are hard to detect
     //thrust::device_vector<ContourSignalPointExt> d_smoothed = smooth_signal(h_points, d_points, smoothing_radius, ws);
     thrust::device_vector<ContourSignalPointExt> d_smoothed = smooth_signal(d_points, smoothing_radius, ws);
     DEBUG_TIMER_STOP(smoothing, "Smoothing Signals");
@@ -378,7 +378,7 @@ void process_image(std::string &image_path, pipeline_workspace_t& ws, visualizer
     //  CORNER DETECTION
     //------------------------------------------------------
     DEBUG_TIMER_START(corner_detection);
-    uint32_t peak_detection_radius = 70; // magic value -- lower makes it detect incorrect corners -- higher makes it sometimes detect knobs as corners
+    uint32_t peak_detection_radius = 85; // magic value -- lower makes it detect incorrect corners -- higher makes it sometimes detect knobs as corners
     float prominece_threshold = 8.0f;    // magic value
     uint32_t distance_threshold = 0;
 
@@ -386,25 +386,25 @@ void process_image(std::string &image_path, pipeline_workspace_t& ws, visualizer
     DEBUG_TIMER_STOP(corner_detection, "Corner Detection");
 
     CPU_TIMER_START(corner_validation);
-    /*
-    auto piece_id = 0;
-    auto invalid_count = 0;
-    for (const auto &c : h_corners)
-    {
-        piece_id++;
-        if (c.point_indices.size() != 4)
-        {
-            //     std::cout << " " << piece_id << " with " << c.point_indices.size() << " corners\n";
-            invalid_count++;
-        }
-        for (uint8_t i = 0; i < c.point_indices.size(); ++i)
-        {
-            h_smoothed[c.point_indices.at(i)].distance = 0;
-        }
-    }
+    
+    // auto piece_id = 0;
+    // auto invalid_count = 0;
+    // for (const auto &c : h_corners)
+    // {
+    //     piece_id++;
+    //     if (c.point_indices.size() != 4)
+    //     {
+    //         std::cout << " " << piece_id << " with " << c.point_indices.size() << " corners\n";
+    //         invalid_count++;
+    //     }
+    //     for (uint8_t i = 0; i < c.point_indices.size(); ++i)
+    //     {
+    //         h_smoothed[c.point_indices.at(i)].distance = 0;
+    //     }
+    // }
 
-    std::cout << "Found " << h_corners.size() - invalid_count << " valid pieces \n\n";
-    */
+    // std::cout << "Found " << h_corners.size() - invalid_count << " valid pieces \n\n";
+    
     CPU_TIMER_STOP(corner_validation, "Corner Validation");
 
     //------------------------------------------------------

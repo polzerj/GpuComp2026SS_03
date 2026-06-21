@@ -25,10 +25,11 @@
 
 // ── Tunable parameters ─────────────────────────────────────────────────────────
 static constexpr int BLOCK_X = 32;
-static constexpr int BLOCK_Y = 8;
+static constexpr int BLOCK_Y = 16;
 static constexpr int HIST_BINS = 256;
 static constexpr int HIST_BLOCK = 1024;
 static constexpr float GAUSSIAN_SIGMA = 2.0f;
+static constexpr int RADIUS = 6;
 #define MAX_KERNEL_HALF 15
 //#define PREPROC_TIMING
 
@@ -51,7 +52,7 @@ static void cudaCheck(cudaError_t err, const char *file, int line)
 struct pipeline_t
 {
     uchar3 *d_rgb = nullptr;     //   RGB input
-    float *d_gray = nullptr;     //  luma , Gaussian output
+    uint8_t *d_gray = nullptr;     //  luma , Gaussian output
     uint8_t *d_binary = nullptr; //  binary after threshold
     int width = 0;
     int height = 0;
@@ -91,19 +92,13 @@ static void free_pipeline(pipeline_t &p, bool free_rgb = true, bool free_gray = 
 }
 
 // RGB → luma
-__global__ void rgba_to_luma_kernel(const uchar3 *__restrict__ src,
-                                    float *__restrict__ dst,
-                                    int W, int H)
+__global__ void rgba_to_luma_kernel(const uchar3 *src, uint8_t *dst, int N)
 {
-    int x = blockIdx.x * blockDim.x + threadIdx.x;
-    int y = blockIdx.y * blockDim.y + threadIdx.y;
-    if (x >= W || y >= H)
-        return;
-
-    uchar3 p = src[y * W + x];
-    dst[y * W + x] = 0.299f * p.x + 0.587f * p.y + 0.114f * p.z;
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= N) return;
+    uchar3 p = src[i];
+    dst[i] = (uint8_t)(0.299f * p.x + 0.587f * p.y + 0.114f * p.z + 0.5f);
 }
-
 // ── Gaussian kernel
 
 #define MAX_KERNEL_HALF 15 // sigma is at 2.0
@@ -113,24 +108,24 @@ __constant__ float c_gaussian[2 * MAX_KERNEL_HALF + 1]; // 31 elements...
 // compute gaussian in h_k
 // Normalize
 // Fill c_gaussian in constant mem with kernel elements.
-static int build_gaussian_kernel(float sigma)
+static void build_gaussian_kernel(float sigma)
 {
-    int radius = (int)ceilf(3.0f * sigma);
+    //int radius = (int)ceilf(3.0f * sigma);
 
-    int ksize = 2 * radius + 1;
-    float h_k[2 * radius + 1];
+    int ksize = 2 * RADIUS + 1;
+    float h_k[2 * RADIUS + 1];
     float sum = 0.0f;
 
-    for (int i = -radius; i <= radius; ++i)
+    for (int i = -RADIUS; i <= RADIUS; ++i)
     {
-        h_k[i + radius] = expf(-(float)(i * i) / (2.0f * sigma * sigma));
-        sum += h_k[i + radius];
+        h_k[i + RADIUS] = expf(-(float)(i * i) / (2.0f * sigma * sigma));
+        sum += h_k[i + RADIUS];
     }
     for (int i = 0; i < ksize; ++i)
         h_k[i] /= sum;
 
     CUDA_CHECK(cudaMemcpyToSymbol(c_gaussian, h_k, ksize * sizeof(float)));
-    return radius;
+
 }
 
 // Handle edge pixels
@@ -141,85 +136,86 @@ __device__ static int clamp_coord(int v, int limit)
 }
 
 // ─── separable Gaussian horizontal & vertical ─────
-__global__ void gaussian_fused(const float *__restrict__ src,
-                               float *__restrict__ dst,
-                               int W, int H, int radius)
+template <typename T, int RADIUS>
+__global__ void gaussian_fused(const T *__restrict__ src,
+                               uint8_t *__restrict__ dst,
+                               int W, int H)
 {
-    extern __shared__ float smem[];
-    const int rows = blockDim.y + 2 * radius; // smem rows
-    const int in_w = blockDim.x + 2 * radius;
-    float *smem_in = smem;
-    float *smem_hc = smem + rows * in_w; // horizontal-conv output
+    constexpr int ROWS = BLOCK_Y + 2 * RADIUS;
+    constexpr int INW  = BLOCK_X + 2 * RADIUS;
 
-    const int x0 = blockIdx.x * blockDim.x;
-    const int y0 = blockIdx.y * blockDim.y;
-    const int tid = threadIdx.y * blockDim.x + threadIdx.x;
-    const int bsz = blockDim.x * blockDim.y;
+    __shared__ float smem_in[ROWS][INW];
+    __shared__ float smem_hc[ROWS][BLOCK_X];
 
-    // load full input tile and halos
-    // Clamp edges
-    for (int i = tid; i < rows * in_w; i += bsz)
-    {
-        int r = i / in_w, c = i % in_w;
-        int gx = clamp_coord(x0 + c - radius, W);
-        int gy = clamp_coord(y0 + r - radius, H);
-        smem_in[i] = src[gy * W + gx];
+    const int x0  = blockIdx.x * BLOCK_X;
+    const int y0  = blockIdx.y * BLOCK_Y;
+    const int tid = threadIdx.y * BLOCK_X + threadIdx.x;
+
+    // Phase 1: load input tile + halos into smem_in
+    for (int i = tid; i < ROWS * INW; i += BLOCK_X * BLOCK_Y) {
+        int r = i / INW, c = i % INW;
+        smem_in[r][c] = (float)src[clamp_coord(y0 + r - RADIUS, H) * W +
+                                   clamp_coord(x0 + c - RADIUS, W)];
     }
     __syncthreads();
 
     // horizontal convolution for every row
     // Result stored in smem_hc
-    for (int i = tid; i < rows * (int)blockDim.x; i += bsz)
-    {
-        int r = i / blockDim.x, c = i % blockDim.x;
+    for (int i = tid; i < ROWS * BLOCK_X; i += BLOCK_X * BLOCK_Y) {
+        int r = i / BLOCK_X, c = i % BLOCK_X;
         float sum = 0.0f;
-        for (int k = 0; k <= 2 * radius; ++k)
-            sum += c_gaussian[k] * smem_in[r * in_w + c + k];
-
-        smem_hc[r * blockDim.x + c] = sum;
+        #pragma unroll
+        for (int k = 0; k <= 2 * RADIUS; ++k)
+            sum += c_gaussian[k] * smem_in[r][c + k];
+        smem_hc[r][c] = sum;
     }
     __syncthreads();
 
-    // vertical convolution, one output pixel per thread.
-    int x = x0 + threadIdx.x;
-    int y = y0 + threadIdx.y;
-    if (x >= W || y >= H)
-        return;
+    // Phase 3: vertical convolution → global output
+    const int x = x0 + threadIdx.x;
+    const int y = y0 + threadIdx.y;
+    if (x >= W || y >= H) return;
 
     float sum = 0.0f;
-    for (int k = 0; k <= 2 * radius; ++k)
-        sum += c_gaussian[k] * smem_hc[(threadIdx.y + k) * blockDim.x + threadIdx.x];
-
-    dst[y * W + x] = sum;
+    #pragma unroll
+    for (int k = 0; k <= 2 * RADIUS; ++k)
+        sum += c_gaussian[k] * smem_hc[threadIdx.y + k][threadIdx.x];
+    dst[y * W + x] = (uint8_t)(sum + 0.5f);  
 }
 
 // ─── Histogram for Otsu ───────
-__global__ void histogram_kernel(const float *__restrict__ luma,
+__global__ void histogram_kernel(const uint8_t *__restrict__ luma,
                                  int *hist, int N)
 {
-    __shared__ int s_hist[HIST_BINS];
+    extern __shared__ int s_hist[];   // [nwarps × HIST_BINS]
 
-    int tid = threadIdx.x;
-    int block_size = blockDim.x;
+    const int tid    = threadIdx.x;
+    const int warpId = tid / 32;
+    const int laneId = tid % 32;
+    const int nwarps = blockDim.x / 32;
+    int *my_hist = s_hist + warpId * HIST_BINS;
 
-    for (int i = tid; i < HIST_BINS; i += block_size)
-        s_hist[i] = 0;
+    for (int i = laneId; i < HIST_BINS; i += 32)
+        my_hist[i] = 0;
     __syncthreads();
 
-    // Each thread processes 4 pixels
-    int idx4 = blockIdx.x * block_size + tid; // group-of-4 index
-    if (idx4 * 4 < N)
-    {
-        float4 v = reinterpret_cast<const float4 *>(luma)[idx4];
-        atomicAdd(&s_hist[min(255, max(0, (int)v.x))], 1);
-        atomicAdd(&s_hist[min(255, max(0, (int)v.y))], 1);
-        atomicAdd(&s_hist[min(255, max(0, (int)v.z))], 1);
-        atomicAdd(&s_hist[min(255, max(0, (int)v.w))], 1);
+    int idx4 = blockIdx.x * blockDim.x + tid;
+    if (idx4 * 4 < N) {
+        uchar4 v = reinterpret_cast<const uchar4 *>(luma)[idx4];
+        atomicAdd(&my_hist[v.x], 1);
+        atomicAdd(&my_hist[v.y], 1);
+        atomicAdd(&my_hist[v.z], 1);
+        atomicAdd(&my_hist[v.w], 1);
     }
     __syncthreads();
 
-    for (int i = tid; i < HIST_BINS; i += block_size)
-        atomicAdd(&hist[i], s_hist[i]);
+    // Reduce all warp slices into global histogram
+    for (int i = tid; i < HIST_BINS; i += blockDim.x) {
+        int sum = 0;
+        for (int w = 0; w < nwarps; ++w)
+            sum += s_hist[w * HIST_BINS + i];
+        atomicAdd(&hist[i], sum);
+    }
 }
 
 // ─── Otsu threshold  ──────
@@ -286,22 +282,23 @@ __global__ void otsu_kernel(const int *__restrict__ hist, int N, float *out)
 // All threads read the same value
 // Processes 4 pixels per thread via float4 load + packed uint32 write.
 
-__global__ void apply_threshold_kernel(const float *__restrict__ luma,
-                                       uint8_t *__restrict__ binary,
+__global__ void apply_threshold_kernel(const uint8_t *__restrict__ luma,
+                                       uint8_t       *__restrict__ binary,
                                        int W, int H, float threshold)
 {
-    int idx = blockIdx.x * blockDim.x + threadIdx.x; // group-of-4 index
-    int y = blockIdx.y * blockDim.y + threadIdx.y;
-    if (idx * 4 >= W || y >= H)
-        return;
+    const uint8_t thresh = (uint8_t)threshold;
 
-    float4 v = reinterpret_cast<const float4 *>(luma)[y * (W / 4) + idx];
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    int y   = blockIdx.y * blockDim.y + threadIdx.y;
+    if (idx * 4 >= W || y >= H) return;
+
+    uchar4 v = reinterpret_cast<const uchar4 *>(luma)[y * (W / 4) + idx];
 
     uchar4 result;
-    result.x = v.x > threshold ? 255 : 0;
-    result.y = v.y > threshold ? 255 : 0;
-    result.z = v.z > threshold ? 255 : 0;
-    result.w = v.w > threshold ? 255 : 0;
+    result.x = v.x > thresh ? 255 : 0;
+    result.y = v.y > thresh ? 255 : 0;
+    result.z = v.z > thresh ? 255 : 0;
+    result.w = v.w > thresh ? 255 : 0;
 
     reinterpret_cast<uchar4 *>(binary)[y * (W / 4) + idx] = result;
 }
@@ -483,7 +480,9 @@ rgb_image_d_t preprocessing(const std::string &imagePath, uint8_t *&d_result,  p
     //  RGB → luma
     DETAILED_TIMER_START(total);
     DETAILED_TIMER_START(luma);
-    rgba_to_luma_kernel<<<grid, block>>>(pipe.d_rgb, pipe.d_gray, W, H);
+    dim3 luma_block(256);
+    dim3 luma_grid((W * H + 255) / 256);
+    rgba_to_luma_kernel<<<luma_grid, luma_block>>>(pipe.d_rgb, pipe.d_gray, W*H);
     DETAILED_TIMER_STOP(luma, "rgba_to_luma");
 
     DETAILED_TIMER_START(download_rgb);
@@ -500,17 +499,17 @@ rgb_image_d_t preprocessing(const std::string &imagePath, uint8_t *&d_result,  p
     //pipe.d_rgb = nullptr;
 
     // Gaussian blur
-    const int radius = build_gaussian_kernel(GAUSSIAN_SIGMA);
+    build_gaussian_kernel(GAUSSIAN_SIGMA);
 
-    const int rows_gauss = block.y + 2 * radius;
-    size_t smem_gauss = (size_t)rows_gauss * (block.x + 2 * radius + block.x) * sizeof(float);
+    //const int rows_gauss = block.y + 2 * radius;
+    //size_t smem_gauss = (size_t)rows_gauss * (block.x + 2 * radius + block.x) * sizeof(float);
 
     DETAILED_TIMER_START(gauss);
     // float* d_blur = nullptr;
     //cudaMalloc(&d_blur, sizeof(float) * W * H);
-    float* d_blur = ws.d_blur.data();
+    uint8_t* d_blur = ws.d_blur.data();
     
-    gaussian_fused<<<grid, block, smem_gauss>>>(pipe.d_gray, d_blur, W, H, radius);
+    gaussian_fused<uint8_t, RADIUS><<<grid, block>>>(pipe.d_gray, d_blur, W, H);
     //std::swap(pipe.d_gray, d_blur);
     //cudaFree(d_blur);
     pipe.d_gray = d_blur;
@@ -529,9 +528,9 @@ rgb_image_d_t preprocessing(const std::string &imagePath, uint8_t *&d_result,  p
     float* d_threshold = ws.d_threshold.data();
 
     CUDA_CHECK(cudaMemset(d_hist, 0, HIST_BINS * sizeof(int)));
-
     DETAILED_TIMER_START(hist);
-    histogram_kernel<<<(num_pixels / 4 + HIST_BLOCK - 1) / HIST_BLOCK, HIST_BLOCK>>>(pipe.d_gray, d_hist, num_pixels);
+    const size_t smem_hist = (HIST_BLOCK / 32) * HIST_BINS * sizeof(int);
+histogram_kernel<<<(num_pixels / 4 + HIST_BLOCK - 1) / HIST_BLOCK, HIST_BLOCK, smem_hist>>>(pipe.d_gray, d_hist, num_pixels);
     DETAILED_TIMER_STOP(hist, "histogram");
 
     DETAILED_TIMER_START(otsu);
