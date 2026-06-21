@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 import csv
@@ -11,10 +12,9 @@ from matplotlib.patches import Circle
 from contour_to_signal import (
     enclosing_circle_approx,
     find_contour_chain_approx_simple,
-    find_triangular_peaks,
     load_grayscale_image,
     radial_signal,
-    smooth_contour,
+    trace_contour,
 )
 
 IMAGE_DIR = Path(__file__).parent.parent.parent / "data"
@@ -27,6 +27,18 @@ class ClassifiedPiece:
     edge_deviations: list[float]
     corner_ranks: list[int]
     valid: bool
+
+
+@dataclass
+class PieceAnalysis:
+    label: int
+    boundary_points: list[tuple[int, int]]
+    smooth_points: list[tuple[int, int]]
+    center: tuple[float, float]
+    radius: float
+    signal: list[float]
+    corner_ranks: list[int]
+    classified: ClassifiedPiece
 
 
 def edge_length_between(rank_a: int, rank_b: int, piece_length: int) -> int:
@@ -163,15 +175,134 @@ def detect_corners_from_signal(points: list[tuple[int, int]]) -> tuple[
 ]:
     center, radius = enclosing_circle_approx(points)
     signal = radial_signal(points, center)
-    peaks_idx, _, _ = find_triangular_peaks(
+    peaks_idx = detect_corners_like_cuda(
         signal,
-        min_distance=5,
-        min_prominence=5,
-        smooth_window=2,
-        min_sharpness=20,
+        peak_detection_radius=70,
+        prominence_threshold=8.0,
+        distance_threshold=0,
     )
-    peaks_idx = [idx for idx in peaks_idx if idx != 1]
     return center, radius, signal, peaks_idx
+
+
+def cyclic_distance(a: int, b: int, length: int) -> int:
+    diff = abs(a - b)
+    return min(diff, length - diff)
+
+
+def detect_corners_like_cuda(
+    signal: list[float],
+    peak_detection_radius: int,
+    prominence_threshold: float,
+    distance_threshold: int,
+) -> list[int]:
+    num_points = len(signal)
+    if num_points == 0:
+        return []
+
+    candidates: list[tuple[int, float]] = []
+
+    for idx, self_distance in enumerate(signal):
+        is_peak = True
+        neighbor_sum = 0.0
+        neighbor_count = 0
+
+        radius_max = min(peak_detection_radius, num_points)
+        for radius in range(1, radius_max + 1):
+            right_rank = (idx + radius) % num_points
+            left_rank = (idx + num_points - radius) % num_points
+
+            right_distance = signal[right_rank]
+            left_distance = signal[left_rank]
+
+            if self_distance <= right_distance or self_distance <= left_distance:
+                is_peak = False
+                break
+
+            neighbor_sum += right_distance + left_distance
+            neighbor_count += 2
+
+        if not is_peak or neighbor_count == 0:
+            continue
+
+        neighbor_avg = neighbor_sum / float(neighbor_count)
+        prominence = self_distance - neighbor_avg
+
+        if prominence >= prominence_threshold:
+            candidates.append((idx, prominence))
+
+    min_corner_distance = distance_threshold
+    if min_corner_distance == 0:
+        min_corner_distance = max(1, num_points // 8)
+
+    selected: list[int] = []
+
+    for idx, _score in sorted(candidates, key=lambda item: item[1], reverse=True):
+        if all(
+            cyclic_distance(idx, chosen, num_points) >= min_corner_distance
+            for chosen in selected
+        ):
+            selected.append(idx)
+
+        if len(selected) == 4:
+            break
+
+    selected.sort()
+    return selected
+
+
+def extract_connected_contours(boundary: np.ndarray) -> list[list[tuple[int, int]]]:
+    mask = boundary > 0
+    height, width = mask.shape
+    visited = np.zeros_like(mask, dtype=bool)
+    components: list[list[tuple[int, int]]] = []
+    neighbors = [
+        (-1, -1),
+        (-1, 0),
+        (-1, 1),
+        (0, -1),
+        (0, 1),
+        (1, -1),
+        (1, 0),
+        (1, 1),
+    ]
+
+    for y in range(height):
+        for x in range(width):
+            if not mask[y, x] or visited[y, x]:
+                continue
+
+            queue: deque[tuple[int, int]] = deque([(y, x)])
+            visited[y, x] = True
+            component_pixels: list[tuple[int, int]] = []
+
+            while queue:
+                cy, cx = queue.popleft()
+                component_pixels.append((cy, cx))
+
+                for dy, dx in neighbors:
+                    ny = cy + dy
+                    nx = cx + dx
+                    if (
+                        0 <= ny < height
+                        and 0 <= nx < width
+                        and mask[ny, nx]
+                        and not visited[ny, nx]
+                    ):
+                        visited[ny, nx] = True
+                        queue.append((ny, nx))
+
+            if len(component_pixels) < 10:
+                continue
+
+            component_mask = np.zeros_like(boundary, dtype=np.uint8)
+            for cy, cx in component_pixels:
+                component_mask[cy, cx] = 255
+
+            contour = trace_contour(component_mask)
+            if len(contour) > 0:
+                components.append([(int(x), int(y)) for y, x in contour])
+
+    return components
 
 
 def load_smooth_points_from_boundary() -> list[tuple[int, int]]:
@@ -179,6 +310,38 @@ def load_smooth_points_from_boundary() -> list[tuple[int, int]]:
     contour = find_contour_chain_approx_simple(boundary)
     raw_points = [(int(x), int(y)) for x, y in contour]
     return smooth_contour(raw_points, window=5)
+
+
+def load_piece_analyses_from_boundary() -> list[PieceAnalysis]:
+    boundary = load_grayscale_image(IMAGE_DIR / "processed" / "boundary.png")
+    contours = extract_connected_contours(boundary)
+    analyses: list[PieceAnalysis] = []
+
+    for label, contour in enumerate(contours):
+        smooth_points = smooth_contour(contour, window=5)
+        center, radius, signal, peaks_idx = detect_corners_from_signal(smooth_points)
+        classified = classify_edges(
+            smooth_points,
+            peaks_idx,
+            center[0],
+            center[1],
+            edge_threshold=15.0,
+        )
+        classified.label = label
+        analyses.append(
+            PieceAnalysis(
+                label=label,
+                boundary_points=contour,
+                smooth_points=smooth_points,
+                center=center,
+                radius=radius,
+                signal=signal,
+                corner_ranks=peaks_idx,
+                classified=classified,
+            )
+        )
+
+    return analyses
 
 
 def save_classification_csv(piece: ClassifiedPiece, filename: Path) -> None:
@@ -217,6 +380,51 @@ def save_classification_csv(piece: ClassifiedPiece, filename: Path) -> None:
                     piece.valid,
                 ]
             )
+
+
+def save_all_classifications_csv(
+    pieces: list[PieceAnalysis],
+    filename: Path,
+) -> None:
+    filename.parent.mkdir(parents=True, exist_ok=True)
+    with filename.open("w", newline="") as csv_file:
+        writer = csv.writer(csv_file)
+        writer.writerow(
+            [
+                "label",
+                "edge",
+                "corner_rank_a",
+                "corner_rank_b",
+                "class",
+                "mean_deviation",
+                "valid",
+            ]
+        )
+
+        for piece in pieces:
+            if len(piece.classified.edges) != 4:
+                continue
+
+            for edge_index, edge_label in enumerate(piece.classified.edges):
+                corner_ranks = piece.classified.corner_ranks
+                corner_a = (
+                    corner_ranks[edge_index] if edge_index < len(corner_ranks) else ""
+                )
+                corner_b_index = (
+                    (edge_index + 1) % len(corner_ranks) if corner_ranks else 0
+                )
+                corner_b = corner_ranks[corner_b_index] if corner_ranks else ""
+                writer.writerow(
+                    [
+                        piece.label,
+                        edge_index,
+                        corner_a,
+                        corner_b,
+                        edge_label,
+                        piece.classified.edge_deviations[edge_index],
+                        piece.classified.valid,
+                    ]
+                )
 
 
 def main(
@@ -314,6 +522,51 @@ def main(
             plt.close(fig)
 
     return classified
+
+
+def classify_all_pieces(
+    boundary_image: np.ndarray | None = None,
+    save_images: bool = False,
+    save_dir: Path | None = None,
+) -> list[PieceAnalysis]:
+    if boundary_image is None:
+        boundary_image = load_grayscale_image(IMAGE_DIR / "processed" / "boundary.png")
+
+    contours = extract_connected_contours(boundary_image)
+    pieces: list[PieceAnalysis] = []
+
+    for label, contour in enumerate(contours):
+        smooth_points = smooth_contour(contour, window=5)
+        center, radius, signal, peaks_idx = detect_corners_from_signal(smooth_points)
+        classified = classify_edges(
+            smooth_points,
+            peaks_idx,
+            center[0],
+            center[1],
+            edge_threshold=15.0,
+        )
+        classified.label = label
+
+        piece = PieceAnalysis(
+            label=label,
+            boundary_points=contour,
+            smooth_points=smooth_points,
+            center=center,
+            radius=radius,
+            signal=signal,
+            corner_ranks=peaks_idx,
+            classified=classified,
+        )
+        pieces.append(piece)
+
+    if save_images:
+        if save_dir is None:
+            output_csv = IMAGE_DIR / "processed" / "piece_classification.csv"
+        else:
+            output_csv = save_dir / "piece_classification.csv"
+        save_all_classifications_csv(pieces, output_csv)
+
+    return pieces
 
 
 if __name__ == "__main__":
