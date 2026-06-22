@@ -295,8 +295,6 @@ uint32_t *playne_ccl(uint8_t *d_image, uint32_t width, uint32_t height, pipeline
     // 10. Cleanup
     // cudaFree(d_labels);
     // cudaFree(d_image);
-    cudaStreamDestroy(stream1);
-    cudaStreamDestroy(stream2);
 
     return d_labels;
 }

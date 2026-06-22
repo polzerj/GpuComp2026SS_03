@@ -318,7 +318,7 @@ static void init_image_context(image_context_t &ctx)
 {
     CUDA_CHECK(cudaStreamCreateWithFlags(&ctx.stream, cudaStreamNonBlocking));
     ctx.ws.stream = ctx.stream;
-    ctx.viz_ws.stream = ctx.stream;
+    ctx.vis_ws.stream = ctx.stream;
 
     init_jpeg_decoder(ctx.jpeg_decoder);
     init_jpeg_encoder(ctx.jpeg_encoder, 50);
@@ -342,13 +342,32 @@ static void destroy_image_context(image_context_t &ctx)
     }
 }
 
+static bool validate_image_path(const std::string& image_path)
+{
+    if (std::filesystem::exists(image_path) == false)
+    {
+        std::cerr << "File does not exist or is not a regular file: "
+                  << image_path << std::endl;
+        return false;
+    }
+
+    if (std::filesystem::is_directory(image_path))
+    {
+        std::cerr << "Provided path is a directory, not a file: "
+                  << image_path << std::endl;
+        return false;
+    }
+
+    return true;
+}
+
 __global__ void helloFromDevice()
 {
     int tid = threadIdx.x + blockDim.x * blockIdx.x;
     return;
 }
 
-void process_image(std::string &image_path, image_context_t &ctx)
+void process_image(const std::string &image_path, image_context_t &ctx)
 {
     GLOBAL_TIMER_START(images_execution);
 
