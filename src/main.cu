@@ -418,14 +418,32 @@ void process_image(const std::string &image_path, image_context_t &ctx)
     DEBUG_TIMER_STOP(pointer_jumping, "Pointer Jumping");
 
     //cudaFree(global_labels_d);
+    #define USE_COMBINE_SORT_AND_CENTROID (1)
+    //------------------------------------------------------
+    // CENTROID CALUCLATION + SORTING SIGNALS
+    //------------------------------------------------------
+    #if USE_COMBINE_SORT_AND_CENTROID
+    DEBUG_TIMER_START(contour_build);
+    ContourSignalBuildResult contour_signal = build_sorted_contour_signal(
+        out_d.boundaries,
+        out_d.ranks,
+        image_width,
+        image_height,
+        ctx.ws,
+        ctx.stream);
+    DEBUG_TIMER_STOP(contour_build, "Centroid + Sorting Signals");
+    thrust::device_vector<Centroid> &d_centroids = contour_signal.centroids;
+    thrust::device_vector<ContourSignalPoint> &d_points = contour_signal.points;
+    #endif
 
     //------------------------------------------------------
     // CENTROID CALUCLATION
     //------------------------------------------------------
+    #if !USE_COMBINE_SORT_AND_CENTROID
     DEBUG_TIMER_START(centroid);
     thrust::device_vector<Centroid> d_centroids = compute_centroids(out_d.boundaries, image_width, image_height, ctx.ws);
     DEBUG_TIMER_STOP(centroid, "Centroid Calculation");
- 
+
     //------------------------------------------------------
     // SORTING SIGNALS
     //------------------------------------------------------
@@ -438,6 +456,7 @@ void process_image(const std::string &image_path, image_context_t &ctx)
     //cudaFree(out_d.boundaries);
     //cudaFree(out_d.ranks);
     //cudaFree(out_d.successors);
+    #endif
 
     //------------------------------------------------------
     //  SMOOTHING SIGNALS
