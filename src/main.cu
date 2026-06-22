@@ -37,6 +37,8 @@
 #include "visualizer.cuh"
 #include "visualizer_exp.cuh"
 #include "pipeline_workspace.hpp"
+#include <mutex>
+static std::mutex g_encoder_mutex;
 
 rgb_image_t read_image(const std::string &filePath)
 {
@@ -283,7 +285,7 @@ int save_rgb_image(const rgb_image_t &image, const std::string &filename)
 
 static int requested_stream_count(int image_count)
 {
-    int default_streams = std::min(3, std::max(1, image_count));
+    int default_streams = std::min(4, std::max(1, image_count));
     const char *env = std::getenv("PUZZLE_STREAMS");
 
     if (env == nullptr)
@@ -423,9 +425,7 @@ void process_image(const std::string &image_path, image_context_t &ctx)
     DEBUG_TIMER_START(centroid);
     thrust::device_vector<Centroid> d_centroids = compute_centroids(out_d.boundaries, image_width, image_height, ctx.ws);
     DEBUG_TIMER_STOP(centroid, "Centroid Calculation");
-    DEBUG_TIMER_START(transfercentroid);
-    thrust::host_vector<Centroid> centroids = d_centroids; // we need this for classification
-    DEBUG_TIMER_STOP(transfercentroid, "Transfer Centroid");
+ 
     //------------------------------------------------------
     // SORTING SIGNALS
     //------------------------------------------------------
@@ -448,10 +448,15 @@ void process_image(const std::string &image_path, image_context_t &ctx)
     thrust::device_vector<ContourSignalPointExt> d_smoothed = smooth_signal(d_points, smoothing_radius, ctx.ws);
     DEBUG_TIMER_STOP(smoothing, "Smoothing Signals");
 
+    cudaStreamSynchronize(ctx.stream);
     DEBUG_TIMER_START(save_contour_signal);
     thrust::host_vector<ContourSignalPointExt> h_smoothed = d_smoothed; // this one is necessary for the steps after
     //save_contour_signal_csv(h_smoothed, "../data/processed/contour_signal_smoothed.csv");
     DEBUG_TIMER_STOP(save_contour_signal, "Saving Smoothed Contour Signal");
+
+    DEBUG_TIMER_START(transfercentroid);
+    thrust::host_vector<Centroid> centroids = d_centroids; // we need this for classification
+    DEBUG_TIMER_STOP(transfercentroid, "Transfer Centroid");
 
     //------------------------------------------------------
     //  CORNER DETECTION
@@ -466,23 +471,23 @@ void process_image(const std::string &image_path, image_context_t &ctx)
 
     CPU_TIMER_START(corner_validation);
 
-    // auto piece_id = 0;
-    // auto invalid_count = 0;
-    // for (const auto &c : h_corners)
-    // {
-    //     piece_id++;
-    //     if (c.point_indices.size() != 4)
-    //     {
-    //         std::cout << " " << piece_id << " with " << c.point_indices.size() << " corners\n";
-    //         invalid_count++;
-    //     }
-    //     for (uint8_t i = 0; i < c.point_indices.size(); ++i)
-    //     {
-    //         h_smoothed[c.point_indices.at(i)].distance = 0;
-    //     }
-    // }
+    auto piece_id = 0;
+    auto invalid_count = 0;
+    for (const auto &c : h_corners)
+    {
+        piece_id++;
+        if (c.point_indices.size() != 4)
+        {
+            std::cout << " " << piece_id << " with " << c.point_indices.size() << " corners\n";
+            invalid_count++;
+        }
+        for (uint8_t i = 0; i < c.point_indices.size(); ++i)
+        {
+            h_smoothed[c.point_indices.at(i)].distance = 0;
+        }
+    }
 
-    // std::cout << "Found " << h_corners.size() - invalid_count << " valid pieces \n\n";
+    std::cout << "Found " << h_corners.size() - invalid_count << " valid pieces \n\n";
 
     CPU_TIMER_STOP(corner_validation, "Corner Validation");
 
@@ -503,6 +508,9 @@ void process_image(const std::string &image_path, image_context_t &ctx)
     std::string output_path =
         "../data/processed/" + image_name + "_classified.jpg";
 
+    // Inside process_image, wrap the visualization/encoding call:
+{
+    std::lock_guard<std::mutex> lock(g_encoder_mutex);
     visualizer_exp(
         &original_image_d,
         output_path,
@@ -513,6 +521,7 @@ void process_image(const std::string &image_path, image_context_t &ctx)
         classified,
         ctx.vis_ws,
         ctx.jpeg_encoder);
+}
     //cudaFree(original_image_d.data);
 
     CUDA_CHECK(cudaStreamSynchronize(ctx.stream));

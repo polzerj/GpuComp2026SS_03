@@ -86,7 +86,7 @@ thrust::device_vector<Centroid> compute_centroids(const uint32_t *d_labels_in, u
     thrust::device_ptr<const uint32_t> d_labels = thrust::device_pointer_cast(d_labels_in);
 
     DETAILED_TIMER_START(find_max_label);
-    uint32_t max_label = thrust::reduce(d_labels, d_labels + num_pixels, 0u, thrust::maximum<uint32_t>());
+    uint32_t max_label = thrust::reduce(policy, d_labels, d_labels + num_pixels, 0u, thrust::maximum<uint32_t>());
     DETAILED_TIMER_STOP(find_max_label, "Find max label");
 
     if (max_label == 0)

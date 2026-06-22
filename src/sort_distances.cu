@@ -175,8 +175,8 @@ thrust::device_vector<ContourSignalPoint> sort_distances(
     thrust::device_ptr<float> center_y_begin =
         thrust::device_pointer_cast(d_center_y);
 
-    thrust::fill(center_x_begin, center_x_begin + pixel_count, -1.0f);
-    thrust::fill(center_y_begin, center_y_begin + pixel_count, -1.0f);
+    thrust::fill(policy, center_x_begin, center_x_begin + pixel_count, -1.0f);
+    thrust::fill(policy, center_y_begin, center_y_begin + pixel_count, -1.0f);
 
     uint32_t threads = 256;
     uint32_t centroid_blocks = (static_cast<uint32_t>(d_centroids.size()) + threads - 1) / threads;

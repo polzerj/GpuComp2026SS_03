@@ -42,6 +42,9 @@ struct pipeline_workspace_t {
     device_buffer_t<uint32_t> d_ptr_ranks;
     device_buffer_t<uint32_t> d_ptr_predecessors;
 
+    device_buffer_t<uint32_t> d_ptr_root_list;
+    device_buffer_t<uint32_t> d_ptr_root_count;
+
     device_buffer_t<uint2> d_ptr_work_a;
     device_buffer_t<uint2> d_ptr_work_b;
 

@@ -288,7 +288,7 @@ __global__ void apply_threshold_kernel(const uint8_t *__restrict__ luma,
                                        uint8_t *__restrict__ binary,
                                        int W, int H, const float *threshold)
 {
-    const uint8_t thresh = (uint8_t)threshold;
+    const uint8_t thresh = (uint8_t)*threshold;
 
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     int y   = blockIdx.y * blockDim.y + threadIdx.y;
@@ -563,7 +563,7 @@ rgb_image_d_t preprocessing(const std::string &imagePath, uint8_t *&d_result,  p
 
     dim3 thresh_grid((W / 4 + block.x - 1) / block.x, grid.y);
     DETAILED_TIMER_START(thresh);
-    apply_threshold_kernel<<<thresh_grid, block>>>(pipe.d_gray, pipe.d_binary, W, H, d_threshold);
+    apply_threshold_kernel<<<thresh_grid, block,0,stream>>>(pipe.d_gray, pipe.d_binary, W, H, d_threshold);
     DETAILED_TIMER_STOP(thresh, "apply_threshold");
 
     DETAILED_TIMER_START(invert);
