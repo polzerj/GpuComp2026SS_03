@@ -88,13 +88,13 @@ struct PointLabelIsZero {
 };
 
 __global__ void make_signal_keys_and_points_kernel(
-    const uint32_t *boundary_ids,
-    const uint32_t *boundaries,
-    const uint32_t *ranks,
-    uint64_t *keys,
+    __restrict__ const uint32_t *boundary_ids,
+    __restrict__ const uint32_t *boundaries,
+    __restrict__ const uint32_t *ranks,
+    __restrict__ uint64_t *keys,
     ContourSignalPoint *points,
-    uint32_t width,
-    uint32_t num_boundary)
+    __restrict__ uint32_t width,
+    __restrict__ uint32_t num_boundary)
 {
     uint32_t i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= num_boundary)
@@ -118,13 +118,13 @@ __global__ void make_signal_keys_and_points_kernel(
 }
 
 __global__ void compact_reduced_centroids_kernel(
-    const uint32_t *reduced_labels,
+    __restrict__ const uint32_t *reduced_labels,
     const unsigned long long *reduced_sum_x,
     const unsigned long long *reduced_sum_y,
-    const uint32_t *reduced_count,
-    const uint32_t *valid_component_indices,
+    __restrict__ const uint32_t *reduced_count,
+    __restrict__ const uint32_t *valid_component_indices,
     Centroid *centroids,
-    uint32_t num_valid)
+    __restrict__ uint32_t num_valid)
 {
     uint32_t i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= num_valid)
@@ -142,8 +142,8 @@ __global__ void compact_reduced_centroids_kernel(
 
 __device__ int find_centroid_by_label(
     const Centroid *centroids,
-    uint32_t num_centroids,
-    uint32_t label)
+    __restrict__ uint32_t num_centroids,
+    __restrict__ uint32_t label)
 {
     uint32_t lo = 0;
     uint32_t hi = num_centroids;
@@ -168,19 +168,56 @@ __device__ int find_centroid_by_label(
     }
     return -1;
 }
+__device__ int find_centroid_by_label_linear(
+    const Centroid *centroids,
+    __restrict__ uint32_t num_centroids,
+    __restrict__ uint32_t label,
+    __restrict__ uint32_t point_index,
+    __restrict__ uint32_t num_points
+){
+    int estimated_index = static_cast<int>((static_cast<double>(point_index) / static_cast<double>(num_points)) * static_cast<double>(num_centroids));
+
+    if (estimated_index >= static_cast<int>(num_centroids)) {
+        estimated_index = static_cast<int>(num_centroids) - 1;
+    }
+    if (centroids[estimated_index].label == label) {
+        return estimated_index;
+    } else if (centroids[estimated_index].label < label) {
+        for (uint32_t i = estimated_index + 1; i < num_centroids; ++i) {
+            if (centroids[i].label == label) {
+                return static_cast<int>(i);
+            }
+            if (centroids[i].label > label) {
+                break;
+            }
+        }
+    } else {
+        for (int32_t i = estimated_index - 1; i >= 0; --i) {
+            if (centroids[i].label == label) {
+                return i;
+            }
+            if (centroids[i].label < label) {
+                break;
+            }
+        }
+    }
+    // should not reach here if the label exists, but return -1 if not found
+    return -1;
+}
 
 __global__ void apply_centroids_to_points_kernel(
     ContourSignalPoint *points,
-    uint32_t num_points,
+    __restrict__ uint32_t num_points,
     const Centroid *centroids,
-    uint32_t num_centroids)
+    __restrict__ uint32_t num_centroids)
 {
     uint32_t i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= num_points)
         return;
 
     ContourSignalPoint p = points[i];
-    int centroid_index = find_centroid_by_label(centroids, num_centroids, p.label);
+    //int centroid_index = find_centroid_by_label(centroids, num_centroids, p.label);
+    int centroid_index = find_centroid_by_label_linear(centroids, num_centroids, p.label, i, num_points);
 
     if (centroid_index < 0)
     {
@@ -197,115 +234,8 @@ __global__ void apply_centroids_to_points_kernel(
     points[i] = p;
 }
 
+
 // ---------------------------------
-
-struct IsBoundary
-{
-    __device__ bool operator()(uint32_t label) const
-    {
-        return label != 0;
-    }
-};
-
-struct IsValidBoundaryId {
-    const uint32_t* boundaries;
-    const float* center_x;
-    const float* center_y;
-    uint32_t center_capacity;
-
-    __host__ __device__
-    bool operator()(uint32_t pixel_id) const {
-        uint32_t label = boundaries[pixel_id];
-
-        if (label == 0) {
-            return false;
-        }
-
-        if (label >= center_capacity) {
-            return false;
-        }
-
-        // Only keep labels for which a valid centroid exists.
-        return center_x[label] >= 0.0f && center_y[label] >= 0.0f;
-    }
-};
-
-__global__ void scatter_centroids_by_label(
-    const Centroid *centroids,
-    uint32_t num_centroids,
-    float *center_x,
-    float *center_y)
-{
-    uint32_t i = blockIdx.x * blockDim.x + threadIdx.x;
-
-    if (i >= num_centroids)
-    {
-        return;
-    }
-
-    uint32_t label = centroids[i].label;
-    center_x[label] = centroids[i].x;
-    center_y[label] = centroids[i].y;
-}
-
-__global__ void make_signal_keys_and_values(
-    const uint32_t *boundary_ids,
-    const uint32_t *boundaries,
-    const uint32_t *ranks,
-    const float *center_x,
-    const float *center_y,
-    uint64_t *keys,
-    ContourSignalPoint *points,
-    uint32_t width,
-    uint32_t num_boundary)
-{
-    uint32_t i = blockIdx.x * blockDim.x + threadIdx.x;
-
-    if (i >= num_boundary)
-    {
-        return;
-    }
-
-    uint32_t pixel_id = boundary_ids[i];
-
-    uint32_t label = boundaries[pixel_id];
-    uint32_t rank = ranks[pixel_id];
-
-    uint32_t x = pixel_id % width;
-    uint32_t y = pixel_id / width;
-
-    float dx = (x * 1.0) - center_x[label];
-    float dy = (y * 1.0) - center_y[label];
-
-    float dist = sqrtf(dx * dx + dy * dy);
-
-    keys[i] = (static_cast<uint64_t>(label) << 32) | static_cast<uint64_t>(rank);
-
-    ContourSignalPoint p;
-    p.distance = dist;
-    p.x = x;
-    p.y = y;
-    p.label = label;
-    p.rank = rank;
-
-    points[i] = p;
-}
-
-__global__ void filter_boundaries(const uint32_t *boundaries_in, uint32_t *boundaries_out, uint32_t pixel_count,
-                                  const float *center_x, const float *center_y)
-{
-
-    uint32_t i = blockIdx.x * blockDim.x + threadIdx.x;
-
-    if (i >= pixel_count)
-    {
-        return;
-    }
-    uint32_t label = boundaries_in[i];
-
-    boundaries_out[i] = (center_x[label] == -1.0f && center_y[label] == -1.0f) ? 0 : label;
-}
-
 
 
 ContourSignalBuildResult build_sorted_contour_signal(

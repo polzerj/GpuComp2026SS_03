@@ -233,7 +233,7 @@ __global__ void list_rank_step(
 
 
 
-__global__ void list_ranking_chained(
+/*__global__ void list_ranking_chained(
     int blocks, int threads,
     const uint32_t *boundaries,
     uint32_t *ptr_in, uint32_t *rank_in,
@@ -308,7 +308,7 @@ __global__ void list_rank_step_packed(
             }
         }
     }
-}
+}*/
 
 // Helper to pack/unpack
 __global__ void pack_data(const uint32_t* p, const uint32_t* r, uint2* dst, uint32_t n) {

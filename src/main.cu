@@ -32,7 +32,7 @@
 #include "visualizer_exp.cuh"
 #include "pipeline_workspace.hpp"
 #include <mutex>
-static std::mutex g_encoder_mutex;
+//static std::mutex g_encoder_mutex;
 
 void save_contour_signal_csv(
     const thrust::host_vector<ContourSignalPoint> &points,
@@ -205,7 +205,7 @@ void process_image(const std::string &image_path, image_context_t &ctx)
     //------------------------------------------------------
     DEBUG_TIMER_START(pointer_jumping);
     ptr_jmp_out_t out_d = pointer_jumping(global_labels_d, image_width, image_height, ctx.ws);
-    CUDA_CHECK(cudaStreamSynchronize(ctx.stream));
+    //CUDA_CHECK(cudaStreamSynchronize(ctx.stream));
     DEBUG_TIMER_STOP(pointer_jumping, "Pointer Jumping");
 
     //cudaFree(global_labels_d);
@@ -228,7 +228,7 @@ void process_image(const std::string &image_path, image_context_t &ctx)
     //  SMOOTHING SIGNALS
     //------------------------------------------------------
     DEBUG_TIMER_START(smoothing);
-    uint32_t smoothing_radius = 2; // 4 is magic value -- if increased too much corners are hard to detect
+    uint32_t smoothing_radius = 1; // 4 is magic value -- if increased too much corners are hard to detect
     //thrust::device_vector<ContourSignalPointExt> d_smoothed = smooth_signal(h_points, d_points, smoothing_radius, ws);
     thrust::device_vector<ContourSignalPointExt> d_smoothed = smooth_signal(d_points, smoothing_radius, ctx.ws);
     DEBUG_TIMER_STOP(smoothing, "Smoothing Signals");
@@ -294,8 +294,8 @@ void process_image(const std::string &image_path, image_context_t &ctx)
         "../data/processed/" + image_name + "_classified.jpg";
 
     // Inside process_image, wrap the visualization/encoding call:
-{
-    std::lock_guard<std::mutex> lock(g_encoder_mutex);
+// {
+//     std::lock_guard<std::mutex> lock(g_encoder_mutex);
     visualizer_exp(
         &original_image_d,
         output_path,
@@ -306,7 +306,7 @@ void process_image(const std::string &image_path, image_context_t &ctx)
         classified,
         ctx.vis_ws,
         ctx.jpeg_encoder);
-}
+//}
     //cudaFree(original_image_d.data);
 
     CUDA_CHECK(cudaStreamSynchronize(ctx.stream));
