@@ -14,4 +14,3 @@ void visualizer(
     const thrust::host_vector<PieceCorners>& corners,
     const thrust::host_vector<ClassifiedPiece>& classified
 );
-

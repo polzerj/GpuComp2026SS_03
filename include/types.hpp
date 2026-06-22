@@ -1,7 +1,7 @@
 #pragma once
 #include <cstdint>
 #include <vector>
-#include <cuda_runtime.h>         
+#include <cuda_runtime.h>
 #include <thrust/device_vector.h>
 
 #define NUM_RGB_CHANNELS 3

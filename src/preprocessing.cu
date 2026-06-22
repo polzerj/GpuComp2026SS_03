@@ -180,7 +180,7 @@ __global__ void gaussian_fused(const T *__restrict__ src,
     #pragma unroll
     for (int k = 0; k <= 2 * RADIUS; ++k)
         sum += c_gaussian[k] * smem_hc[threadIdx.y + k][threadIdx.x];
-    dst[y * W + x] = (uint8_t)(sum + 0.5f);  
+    dst[y * W + x] = (uint8_t)(sum + 0.5f);
 }
 
 // ─── Histogram for Otsu ───────
@@ -508,7 +508,7 @@ rgb_image_d_t preprocessing(const std::string &imagePath, uint8_t *&d_result,  p
     // float* d_blur = nullptr;
     //cudaMalloc(&d_blur, sizeof(float) * W * H);
     uint8_t* d_blur = ws.d_blur.data();
-    
+
     gaussian_fused<uint8_t, RADIUS><<<grid, block>>>(pipe.d_gray, d_blur, W, H);
     //std::swap(pipe.d_gray, d_blur);
     //cudaFree(d_blur);

@@ -256,7 +256,7 @@ __global__ void list_ranking_chained(
 
     // Instead of Synchronizing, we use cudaStreamTailLaunch.
     // This tells CUDA: "Launch the next step once THIS kernel and its children are finished."
-    
+
     if (current_round < max_rounds) {
         // We launch the management for the NEXT round into the Tail Stream
         // Note: we SWAP the pointers in the arguments for the next launch
@@ -543,7 +543,7 @@ __global__ void walk_boundary_pieces_kernel(
 
     uint32_t curr = successors[id];
     uint32_t dist = 1;
-    
+
     // The root itself is rank 0
     ranks[id] = 0;
 
@@ -552,17 +552,17 @@ __global__ void walk_boundary_pieces_kernel(
     // We walk until we return to the start ID or hit NIL.
     while (curr != id && curr != NIL) {
         ranks[curr] = dist++;
-        
+
         // Use __ldg to exploit the Read-Only/Texture cache for pointer chasing
         uint32_t next = __ldg(&successors[curr]);
-        
+
         // Safety: break if we hit a self-loop or dead end
         if (next == curr || next == NIL) break;
-        
+
         curr = next;
 
         // Massive safety break (prevents infinite GPU kernels on data errors)
-        if (dist > 65535) break; 
+        if (dist > 65535) break;
     }
 }
 
@@ -585,7 +585,7 @@ ptr_jmp_out_t pointer_jumping_old(uint32_t *global_labels, uint32_t image_width,
     ws.d_ptr_done.ensure(1);
 
     ptr_jmp_out_t out;
-    
+
     DETAILED_TIMER_START(malloc);
     // cudaMalloc(&out.boundaries, bytes);
     // cudaMalloc(&out.ranks,      bytes);
@@ -609,27 +609,27 @@ ptr_jmp_out_t pointer_jumping_old(uint32_t *global_labels, uint32_t image_width,
     cudaMemset(out.successors, 0xFF, bytes);
     cudaMemset(d_predecessors, 0xFF, bytes);
     DETAILED_TIMER_STOP(malloc, "Allocate arrays");
-    
 
-    // 1. Init and Build Predecessors 
+
+    // 1. Init and Build Predecessors
     DETAILED_TIMER_START(init_list_and_extract_boundaries);
     init_pointer_list_and_extract_boundaries<<<grid, block>>>(global_labels, image_width, image_height, out);
     DETAILED_TIMER_STOP(init_list_and_extract_boundaries, "Init pointer list and extract boundaries");
-    
+
     DETAILED_TIMER_START(buildandbreak);
     build_predecessors<<<blocks_1d, threads_1d>>>(out.boundaries, out.successors, d_predecessors, pixel_count);
     break_roots_by_label<<<blocks_1d, threads_1d>>>(out.boundaries, d_predecessors, out.ranks, pixel_count);
     DETAILED_TIMER_STOP(buildandbreak, "Build Predecessors| Break roots by label");
 
- 
-    
+
+
     DETAILED_TIMER_START(pointer_jumping);
     pack_data<<<blocks_1d, threads_1d>>>(d_predecessors, out.ranks, d_work_a, pixel_count);
 
     //uint32_t *d_done;
     //cudaMalloc(&d_done, sizeof(uint32_t));
 
-    uint32_t rounds = 32 - __builtin_clz(pixel_count); 
+    uint32_t rounds = 32 - __builtin_clz(pixel_count);
     for (uint32_t r = 0; r < rounds; ++r) {
         uint32_t h_done = 1;
         cudaMemcpy(d_done, &h_done, sizeof(uint32_t), cudaMemcpyHostToDevice);
@@ -662,10 +662,10 @@ ptr_jmp_out_t pointer_jumping(uint32_t *global_labels, uint32_t image_width, uin
 {
     uint32_t pixel_count = image_height * image_width;
     size_t bytes = pixel_count * sizeof(uint32_t);
-    
+
     dim3 block2d(BLOCK_WIDTH_X, BLOCK_WIDTH_Y);
     dim3 grid2d((image_width + block2d.x - 1) / block2d.x, (image_height + block2d.y - 1) / block2d.y);
-    
+
     int threads1d = 256;
     int blocks1d = (pixel_count + threads1d - 1) / threads1d;
 

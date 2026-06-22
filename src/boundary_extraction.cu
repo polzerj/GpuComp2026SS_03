@@ -14,16 +14,16 @@ __global__ void boundary_extraction(uint32_t * global_labels, uint32_t * boundar
 
     uint32_t pixel_id_x = ((blockIdx.x * blockDim.x) + threadIdx.x);
     uint32_t pixel_id_y= ((blockIdx.y * blockDim.y) + threadIdx.y);
-    
+
     uint32_t unique_thread_id = pixel_id_x + pixel_id_y * image_width;
 
     uint32_t block_local_x = threadIdx.x;
     uint32_t block_local_y = threadIdx.y;
     uint32_t block_local_unique_id = block_local_x + BLOCK_WIDTH_X * block_local_y;
 
-    // load data into shared memory 
+    // load data into shared memory
     __shared__ uint32_t shared_block[BLOCK_WIDTH_Y + 2][BLOCK_WIDTH_X + 2]; // we need to load more than just the tile to be able to process all neighbours
-       
+
     shared_block[block_local_y + 1][block_local_x + 1] = 0;
     if (block_local_x == 0) {
         shared_block[block_local_y + 1][0] = 0;
@@ -34,7 +34,7 @@ __global__ void boundary_extraction(uint32_t * global_labels, uint32_t * boundar
         shared_block[BLOCK_WIDTH_Y + 1][block_local_x + 1] = 0;
     }
 
-    uint32_t pixel_value = 0; 
+    uint32_t pixel_value = 0;
     if(pixel_id_x < image_width && pixel_id_y < image_height)
     {
         // fill shared memory
@@ -44,14 +44,14 @@ __global__ void boundary_extraction(uint32_t * global_labels, uint32_t * boundar
         if(block_local_x == 0) shared_block[block_local_y + 1][0] = (pixel_id_x > 0 ) ? global_labels[pixel_id_x - 1 + pixel_id_y * image_width] : 0;// load halo on the left
         if(block_local_x == BLOCK_WIDTH_X - 1) shared_block[block_local_y + 1][BLOCK_WIDTH_X + 1] = (pixel_id_x < image_width - 1  ) ? global_labels[pixel_id_x + 1 + pixel_id_y * image_width] : 0;// load halo on the right
         if(block_local_y == 0) shared_block[0][block_local_x + 1 ] = (pixel_id_y > 0 ) ? global_labels[pixel_id_x + (pixel_id_y - 1) * image_width] : 0;// load halo on the top
-        if(block_local_y == BLOCK_WIDTH_Y - 1) shared_block[BLOCK_WIDTH_Y + 1][block_local_x + 1] = (pixel_id_y < image_height - 1 ) ? global_labels[pixel_id_x + (pixel_id_y + 1) * image_width] : 0;// load halo on the bottom  
-       
-        
-    }    
+        if(block_local_y == BLOCK_WIDTH_Y - 1) shared_block[BLOCK_WIDTH_Y + 1][block_local_x + 1] = (pixel_id_y < image_height - 1 ) ? global_labels[pixel_id_x + (pixel_id_y + 1) * image_width] : 0;// load halo on the bottom
+
+
+    }
     __syncthreads();
 
     uint32_t final_value = 0;
-    if(pixel_id_x < image_width && pixel_id_y < image_height ){  
+    if(pixel_id_x < image_width && pixel_id_y < image_height ){
 
         if(pixel_value != 0) {
             //get neighbourhood values
@@ -69,10 +69,10 @@ __global__ void boundary_extraction(uint32_t * global_labels, uint32_t * boundar
 void extract_boundary( uint32_t * global_labels, uint32_t * extracted_boundary_image, uint32_t image_width, uint32_t image_height) {
     //setup all the necessary memory on device and host
     uint32_t pixel_count = image_height * image_width;
-	
+
     // Create Grid/Block
     dim3 block(BLOCK_WIDTH_X, BLOCK_WIDTH_Y);
-    dim3 grid(ceil(image_width/(float)block.x), ceil(image_height/(float)block.y)); 
+    dim3 grid(ceil(image_width/(float)block.x), ceil(image_height/(float)block.y));
 
     uint32_t  *d_output;
     uint32_t   *d_input;

@@ -305,7 +305,7 @@ void process_image(std::string &image_path, pipeline_workspace_t& ws, visualizer
     uint32_t pixel_count = image_width * image_height;
 
     // grayscale_image_t testimage;
-    // testimage.data.resize(pixel_count); 
+    // testimage.data.resize(pixel_count);
     // testimage.width = image_width;
     // testimage.height = image_height;
     // cudaMemcpy(testimage.data.data(), d_binary_image, pixel_count, cudaMemcpyDeviceToHost);
@@ -386,7 +386,7 @@ void process_image(std::string &image_path, pipeline_workspace_t& ws, visualizer
     DEBUG_TIMER_STOP(corner_detection, "Corner Detection");
 
     CPU_TIMER_START(corner_validation);
-    
+
     // auto piece_id = 0;
     // auto invalid_count = 0;
     // for (const auto &c : h_corners)
@@ -404,7 +404,7 @@ void process_image(std::string &image_path, pipeline_workspace_t& ws, visualizer
     // }
 
     // std::cout << "Found " << h_corners.size() - invalid_count << " valid pieces \n\n";
-    
+
     CPU_TIMER_STOP(corner_validation, "Corner Validation");
 
     //------------------------------------------------------
@@ -416,7 +416,7 @@ void process_image(std::string &image_path, pipeline_workspace_t& ws, visualizer
     CPU_TIMER_STOP(classification, "Classification");
 
     CPU_TIMER_START(visualization);
-    
+
     image_path.erase(image_path.find_last_of('.'));        // remove extension
     image_path.erase(0, image_path.find_last_of('/') + 1); // remove directories
     std::string output_path = "../data/processed/" + image_path + "_classified.jpg";
@@ -430,11 +430,11 @@ void process_image(std::string &image_path, pipeline_workspace_t& ws, visualizer
         classified,
         vis_ws,
         jpeg_encoder
-    );    
+    );
     //cudaFree(original_image_d.data);
-    
+
     CPU_TIMER_STOP(visualization, "Visualization and saving output image");
-    
+
     GLOBAL_TIMER_STOP(images_execution, "Image Execution");
 }
 
@@ -449,7 +449,7 @@ int main(int argc, char *argv[])
     init_jpeg_decoder(jpeg_decoder);
     jpeg_encoder_t jpeg_encoder{};
     init_jpeg_encoder(jpeg_encoder, 50);
-    
+
     if (argc == 1)
     {
         // no image provided, use default

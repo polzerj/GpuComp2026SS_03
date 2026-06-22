@@ -21,7 +21,7 @@ struct pipeline_workspace_t {
     // device_buffer_t<uint32_t> d_u32_b;
     // device_buffer_t<uint32_t> d_u32_c;
     // device_buffer_t<uint32_t> d_u32_d;
-    
+
     device_buffer_t<uchar3> d_rgb;
     device_buffer_t<uint8_t> d_gray;
     device_buffer_t<uint8_t> d_blur;
