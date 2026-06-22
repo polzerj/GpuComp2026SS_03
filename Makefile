@@ -1,6 +1,14 @@
 NVCC := nvcc
-NVCC_FLAGS += -O3 --extended-lambda -rdc=true -DENABLE_TIMING 
-COMPILER_OPTIONS += -Wall -Wextra
+GPU_ARCH := sm_75
+NVCC_FLAGS += -O3 \
+              -arch=$(GPU_ARCH) \
+              --use_fast_math \
+              --extended-lambda \
+              -Xptxas -O3 \
+              -Xptxas -dlcm=ca \
+              -Xptxas -v \
+              #-DENABLE_TIMING #-DDRAW_CORNERS -DDRAW_COLORED_EDGES
+COMPILER_OPTIONS += -Wall -Wextra 
 INCLUDES += -Iinclude 
 LIBS += -lnvjpeg -lcudadevrt
 
