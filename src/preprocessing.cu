@@ -13,7 +13,6 @@
 #include "timer.hpp"
 #include "pipeline_workspace.hpp"
 
-#include "stb_image.h"
 #include "preprocessing.cuh"
 
 #include <cuda_runtime.h>
@@ -305,33 +304,6 @@ __global__ void apply_threshold_kernel(const uint8_t *__restrict__ luma,
     reinterpret_cast<uchar4 *>(binary)[y * (W / 4) + idx] = result;
 }
 
-// ── Debug saves ────────────────────────────────────────────────────────────────
-// Compiled in only when -DPREPROC_DEBUG is passed.  Each helper downloads one
-// device buffer, converts it if needed, and writes a PNG to ../data/processed/.
-/*
-#ifdef PREPROC_DEBUG
-static void save_float_stage(const float *d_buf, int W, int H, const char *path)
-{
-    std::vector<float>   h_f(W * H);
-    std::vector<uint8_t> h_u8(W * H);
-    cudaMemcpy(h_f.data(), d_buf, (size_t)W * H * sizeof(float), cudaMemcpyDeviceToHost);
-    for (int i = 0; i < W * H; ++i)
-        h_u8[i] = (uint8_t)fminf(255.0f, fmaxf(0.0f, h_f[i]));
-    stbi_write_png(path, W, H, 1, h_u8.data(), W);
-}
-
-static void save_uint8_stage(const uint8_t *d_buf, int W, int H, const char *path)
-{
-    std::vector<uint8_t> h_buf(W * H);
-    cudaMemcpy(h_buf.data(), d_buf, (size_t)W * H, cudaMemcpyDeviceToHost);
-    stbi_write_png(path, W, H, 1, h_buf.data(), W);
-}
-#endif  // PREPROC_DEBUG
-*/
-
-// AI Generated image loading instead of stb
-//  seems faster
-
 // Reads a JPEG file into a host byte buffer.
 static std::vector<uint8_t> read_file(const std::string &path)
 {
@@ -438,19 +410,6 @@ static void nvjpeg_decode(const std::vector<uint8_t>& jpeg, pipeline_t& pipe, in
 
     // nvjpegJpegStateDestroy(state);
     // nvjpegDestroy(handle);
-}
-
-static void jpeg_load(const std::vector<uint8_t> &jpeg, pipeline_t &pipe, int &W, int &H, cudaStream_t stream)
-{
-    int n;
-    unsigned char *data = stbi_load_from_memory(jpeg.data(), jpeg.size(), &W, &H, &n, 3);
-    if (!data)
-        throw std::runtime_error("Failed to decode image with stb_image");
-
-    pipe = alloc_pipeline(W, H);
-    CUDA_CHECK(cudaMemcpyAsync(pipe.d_rgb, data, (size_t)W * H * 3, cudaMemcpyHostToDevice, stream));
-    CUDA_CHECK(cudaStreamSynchronize(stream));
-    stbi_image_free(data);
 }
 
 // MEMCPY
