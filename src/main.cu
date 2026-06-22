@@ -176,7 +176,7 @@ void process_image(const std::string &image_path, image_context_t &ctx)
     rgb_image_d_t original_image_d = preprocessing(image_path, d_binary_image, ctx.ws, ctx.jpeg_decoder);
     DEBUG_TIMER_STOP(preprocessing, "Preprocessing");
 
-    std::cout << "Image " << image_path << " loaded and converted to grayscale with size " << original_image_d.width << "x" << original_image_d.height << "." << std::endl;
+    // std::cout << "Image " << image_path << " loaded and converted to grayscale with size " << original_image_d.width << "x" << original_image_d.height << "." << std::endl;
 
     uint32_t image_width = original_image_d.width;
     uint32_t image_height = original_image_d.height;
@@ -209,11 +209,9 @@ void process_image(const std::string &image_path, image_context_t &ctx)
     DEBUG_TIMER_STOP(pointer_jumping, "Pointer Jumping");
 
     //cudaFree(global_labels_d);
-    #define USE_COMBINE_SORT_AND_CENTROID (1)
     //------------------------------------------------------
     // CENTROID CALUCLATION + SORTING SIGNALS
     //------------------------------------------------------
-    #if USE_COMBINE_SORT_AND_CENTROID
     DEBUG_TIMER_START(contour_build);
     ContourSignalBuildResult contour_signal = build_sorted_contour_signal(
         out_d.boundaries,
@@ -225,29 +223,6 @@ void process_image(const std::string &image_path, image_context_t &ctx)
     DEBUG_TIMER_STOP(contour_build, "Centroid + Sorting Signals");
     thrust::device_vector<Centroid> &d_centroids = contour_signal.centroids;
     thrust::device_vector<ContourSignalPoint> &d_points = contour_signal.points;
-    #endif
-
-    //------------------------------------------------------
-    // CENTROID CALUCLATION
-    //------------------------------------------------------
-    #if !USE_COMBINE_SORT_AND_CENTROID
-    DEBUG_TIMER_START(centroid);
-    thrust::device_vector<Centroid> d_centroids = compute_centroids(out_d.boundaries, image_width, image_height, ctx.ws);
-    DEBUG_TIMER_STOP(centroid, "Centroid Calculation");
-
-    //------------------------------------------------------
-    // SORTING SIGNALS
-    //------------------------------------------------------
-    DEBUG_TIMER_START(sorting);
-    thrust::device_vector<ContourSignalPoint> d_points = sort_distances(out_d.boundaries, out_d.ranks, d_centroids, image_width, image_height, ctx.ws);
-    DEBUG_TIMER_STOP(sorting, "Sorting Signals");
-    DEBUG_TIMER_START(transfersorting);
-    //thrust::host_vector<ContourSignalPoint> h_points = d_points; // this one is necessary for the steps after
-    DEBUG_TIMER_STOP(transfersorting, "Transfer after Sort");
-    //cudaFree(out_d.boundaries);
-    //cudaFree(out_d.ranks);
-    //cudaFree(out_d.successors);
-    #endif
 
     //------------------------------------------------------
     //  SMOOTHING SIGNALS
@@ -281,23 +256,23 @@ void process_image(const std::string &image_path, image_context_t &ctx)
 
     CPU_TIMER_START(corner_validation);
 
-    auto piece_id = 0;
-    auto invalid_count = 0;
-    for (const auto &c : h_corners)
-    {
-        piece_id++;
-        if (c.point_indices.size() != 4)
-        {
-            std::cout << " " << piece_id << " with " << c.point_indices.size() << " corners\n";
-            invalid_count++;
-        }
-        for (uint8_t i = 0; i < c.point_indices.size(); ++i)
-        {
-            h_smoothed[c.point_indices.at(i)].distance = 0;
-        }
-    }
+    // auto piece_id = 0;
+    // auto invalid_count = 0;
+    // for (const auto &c : h_corners)
+    // {
+    //     piece_id++;
+    //     if (c.point_indices.size() != 4)
+    //     {
+    //         std::cout << " " << piece_id << " with " << c.point_indices.size() << " corners\n";
+    //         invalid_count++;
+    //     }
+    //     for (uint8_t i = 0; i < c.point_indices.size(); ++i)
+    //     {
+    //         h_smoothed[c.point_indices.at(i)].distance = 0;
+    //     }
+    // }
 
-    std::cout << "Found " << h_corners.size() - invalid_count << " valid pieces \n\n";
+    // std::cout << "Found " << h_corners.size() - invalid_count << " valid pieces \n\n";
 
     CPU_TIMER_STOP(corner_validation, "Corner Validation");
 
@@ -399,8 +374,7 @@ int main(int argc, char *argv[])
 
         std::string image_path = image_paths[i];
 
-        std::cout << std::endl
-                  << "Processing image: "
+        std::cout << "Processing image: "
                   << image_path
                   << std::endl;
 

@@ -444,7 +444,7 @@ rgb_image_d_t preprocessing(const std::string &imagePath, uint8_t *&d_result,  p
     pipeline_t pipe{};
     nvjpeg_decode(jpeg, pipe, W, H, ws, jpeg_decoder, stream);
     DETAILED_TIMER_STOP(imageread, "image read + decode");
-    printf("[image] %s - %d x %d\n", imagePath.c_str(), W, H);
+    // printf("[image] %s - %d x %d\n", imagePath.c_str(), W, H);
 
     dim3 block(BLOCK_X, BLOCK_Y);
     dim3 grid((W + block.x - 1) / block.x, (H + block.y - 1) / block.y);
