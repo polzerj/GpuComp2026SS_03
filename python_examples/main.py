@@ -60,18 +60,30 @@ def process(image_path: Path) -> None:
     print(f"Time taken for {image_path.name}: {time_taken:.6f} seconds")
 
 
+CONTINUE = True
+
+
 def main() -> None:
     benchmark_file = "benchmark.txt"
-    with open(benchmark_file, "w") as f:
-        f.write("Benchmark Results:\n")
-        f.write("==================\n")
 
-    process(Path("../data") / "single.JPG")
+    if not CONTINUE:
+        with open(benchmark_file, "w") as f:
+            f.write("Benchmark Results:\n")
+            f.write("==================\n")
+        process(Path("../data") / "single.JPG")
+        existing_benchmark = ""
+    else:
+        with open(benchmark_file, "r") as f:
+            existing_benchmark = f.read()
 
     complete_start = time.time()
     images = os.listdir("../data")
     for image in images:
         if image.endswith(".jpg"):
+            if f"{image}:" in existing_benchmark:
+                print(f"Skipping {image} (already benchmarked)")
+                continue
+
             process(Path("../data") / image)
 
     print()
