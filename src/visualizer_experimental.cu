@@ -127,7 +127,8 @@ static void ensure_pixel_capacity(
 static void upload_and_draw_pixels(
     visualizer_workspace_t& ws,
     const std::vector<issued_pixel_t>& pixels,
-    uchar3* d_image
+    uchar3* d_image,
+    cudaStream_t stream
 ) {
     if (pixels.empty()) {
         return;
@@ -136,11 +137,12 @@ static void upload_and_draw_pixels(
     ensure_pixel_capacity(ws, pixels.size());
 
     check_cuda(
-        cudaMemcpy(
+        cudaMemcpyAsync(
             ws.d_pixels,
             pixels.data(),
             pixels.size() * sizeof(issued_pixel_t),
-            cudaMemcpyHostToDevice
+            cudaMemcpyHostToDevice,
+            stream
         ),
         "cudaMemcpy issued pixels"
     );
@@ -149,7 +151,7 @@ static void upload_and_draw_pixels(
     uint32_t blocks =
         static_cast<uint32_t>((pixels.size() + threads - 1) / threads);
 
-    draw_visuals_kernel<<<blocks, threads>>>(
+    draw_visuals_kernel<<<blocks, threads, 0, stream>>>(
         ws.d_pixels,
         d_image,
         static_cast<uint32_t>(pixels.size())
@@ -218,7 +220,8 @@ static void save_image_nvjpeg_reuse(
     const std::string& filename,
     uchar3* d_rgb,
     uint32_t width,
-    uint32_t height
+    uint32_t height,
+    cudaStream_t stream
 ) {
     if (enc.handle == nullptr ||
         enc.state == nullptr ||
@@ -244,7 +247,7 @@ static void save_image_nvjpeg_reuse(
             NVJPEG_INPUT_RGBI,
             width,
             height,
-            nullptr
+            stream
         ),
         "nvjpegEncodeImage"
     );
@@ -257,7 +260,7 @@ static void save_image_nvjpeg_reuse(
             enc.state,
             nullptr,
             &length,
-            nullptr
+            stream
         ),
         "nvjpegEncodeRetrieveBitstream size"
     );
@@ -270,10 +273,12 @@ static void save_image_nvjpeg_reuse(
             enc.state,
             enc.bitstream.data(),
             &length,
-            nullptr
+            stream
         ),
         "nvjpegEncodeRetrieveBitstream data"
     );
+
+    check_cuda(cudaStreamSynchronize(stream), "visualizer encode stream synchronize");
 
     std::ofstream file(filename, std::ios::out | std::ios::binary);
 
@@ -534,6 +539,8 @@ void visualizer_exp(
 ) {
     CPU_TIMER_START(visualizer_total);
 
+    cudaStream_t stream = ws.stream;
+
     std::vector<issued_pixel_t> pixel_buffer;
     pixel_buffer.reserve(points.size() * 12 + classified.size() * 2500);
     // pixel_buffer.reserve(classified.size() * 4000);
@@ -705,7 +712,8 @@ void visualizer_exp(
     //     filename,
     //     d_image,
     //     image_width,
-    //     image_height
+    //     image_height,
+    //     stream
     // );
     // CPU_TIMER_STOP(save_visualized_image, "Save visualized image");
 
@@ -716,11 +724,12 @@ void visualizer_exp(
     ensure_image_copy_capacity(ws, num_pixels);
 
     check_cuda(
-        cudaMemcpy(
+        cudaMemcpyAsync(
             ws.d_image_copy,
             original_image_d->data,
             num_pixels * sizeof(uchar3),
-            cudaMemcpyDeviceToDevice
+            cudaMemcpyDeviceToDevice,
+            stream
         ),
         "cudaMemcpy visualizer image copy"
     );
@@ -728,7 +737,7 @@ void visualizer_exp(
     uchar3* d_image = ws.d_image_copy;
 
     GPU_TIMER_START(draw_visual_pixels);
-    upload_and_draw_pixels(ws, pixel_buffer, d_image);
+    upload_and_draw_pixels(ws, pixel_buffer, d_image, stream);
     GPU_TIMER_STOP(draw_visual_pixels, "Draw visual pixels");
 
     CPU_TIMER_START(save_visualized_image);
@@ -737,7 +746,8 @@ void visualizer_exp(
         filename,
         d_image,
         image_width,
-        image_height
+        image_height,
+        stream
     );
     CPU_TIMER_STOP(save_visualized_image, "Save visualized image");
 }

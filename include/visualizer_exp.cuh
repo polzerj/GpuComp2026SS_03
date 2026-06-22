@@ -31,6 +31,7 @@ struct visualizer_workspace_t {
 
     uchar3* d_image_copy = nullptr;
     size_t image_capacity = 0;
+    cudaStream_t stream = nullptr;
 };
 
 struct jpeg_encoder_t {

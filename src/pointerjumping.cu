@@ -660,6 +660,8 @@ ptr_jmp_out_t pointer_jumping_old(uint32_t *global_labels, uint32_t image_width,
 //sequential list ranking
 ptr_jmp_out_t pointer_jumping(uint32_t *global_labels, uint32_t image_width, uint32_t image_height, pipeline_workspace_t& ws)
 {
+    cudaStream_t stream = ws.stream;
+
     uint32_t pixel_count = image_height * image_width;
     size_t bytes = pixel_count * sizeof(uint32_t);
 
@@ -680,20 +682,19 @@ ptr_jmp_out_t pointer_jumping(uint32_t *global_labels, uint32_t image_width, uin
     out.successors = ws.d_ptr_successors.data();
 
     // Reset ranks to 0
-    cudaMemset(out.ranks, 0, bytes);
+    cudaMemset(out.ranks, 0, bytes, stream);
 
     // Step 1: Extract boundaries and identify immediate successors (neighbors)
     DETAILED_TIMER_START(init_list);
-    init_pointer_list_and_extract_boundaries<<<grid2d, block2d>>>(global_labels, image_width, image_height, out);
+    init_pointer_list_and_extract_boundaries<<<grid2d, block2d, 0, stream>>>(global_labels, image_width, image_height, out);
     DETAILED_TIMER_STOP(init_list, "Extract boundaries and successors");
 
     // Step 2: One thread per piece walk
     // This replaces the pointer-jumping loop entirely.
     DETAILED_TIMER_START(piece_walk);
-    walk_boundary_pieces_kernel<<<blocks1d, threads1d>>>(
+    walk_boundary_pieces_kernel<<<blocks1d, threads1d, 0, stream>>>(
         out.boundaries, out.successors, out.ranks, pixel_count
     );
-    cudaDeviceSynchronize();
     DETAILED_TIMER_STOP(piece_walk, "Piece-wise Boundary Walk");
 
     return out;

@@ -8,6 +8,8 @@
 #include "types.hpp"
 
 struct pipeline_workspace_t {
+    cudaStream_t stream = nullptr;
+
     size_t pixel_capacity = 0;
 
     // device_buffer_t<uint8_t> d_u8_a;

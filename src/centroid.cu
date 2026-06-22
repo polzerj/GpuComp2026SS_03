@@ -7,6 +7,8 @@
 #include <thrust/sequence.h>
 #include <thrust/functional.h>
 #include <thrust/device_ptr.h>
+#include <thrust/system/cuda/execution_policy.h>
+
 #include "centroid.cuh"
 #include "timer.hpp"
 
@@ -75,6 +77,9 @@ __global__ void compactCentroidsKernel(
 
 thrust::device_vector<Centroid> compute_centroids(const uint32_t *d_labels_in, uint32_t width, uint32_t height, pipeline_workspace_t& ws)
 {
+    cudaStream_t stream = ws.stream;
+    auto policy = thrust::cuda::par.on(stream);
+
     auto num_pixels = width * height;
 
     // thrust::device_vector<uint32_t> d_labels(h_labels, h_labels + num_pixels);
@@ -82,7 +87,6 @@ thrust::device_vector<Centroid> compute_centroids(const uint32_t *d_labels_in, u
 
     DETAILED_TIMER_START(find_max_label);
     uint32_t max_label = thrust::reduce(d_labels, d_labels + num_pixels, 0u, thrust::maximum<uint32_t>());
-    cudaDeviceSynchronize();
     DETAILED_TIMER_STOP(find_max_label, "Find max label");
 
     if (max_label == 0)
@@ -124,7 +128,6 @@ thrust::device_vector<Centroid> compute_centroids(const uint32_t *d_labels_in, u
         d_count
     );
 
-    cudaDeviceSynchronize();
     DETAILED_TIMER_STOP(compute_sums, "Compute sums and counts");
 
     DETAILED_TIMER_START(count_valid);
@@ -143,6 +146,7 @@ thrust::device_vector<Centroid> compute_centroids(const uint32_t *d_labels_in, u
     thrust::sequence(indices_begin, indices_begin + label_capacity);
 
     uint32_t num_valid = thrust::count_if(
+        policy,
         count_begin,
         count_begin + label_capacity,
         count_at_least{THRESHOLD}
@@ -161,6 +165,7 @@ thrust::device_vector<Centroid> compute_centroids(const uint32_t *d_labels_in, u
     // //thrust::copy_if(indices.begin(), indices.end(), d_count.begin(), d_valid_labels.begin(), is_positive());
     // thrust::copy_if(indices.begin(), indices.end(), d_count.begin(), d_valid_labels.begin(), count_at_least{THRESHOLD});
     thrust::copy_if(
+        policy,
         indices_begin,
         indices_begin + label_capacity,
         count_begin,
@@ -174,7 +179,7 @@ thrust::device_vector<Centroid> compute_centroids(const uint32_t *d_labels_in, u
     dim3 block2(256);
     dim3 grid2((num_valid + block2.x - 1) / block2.x);
 
-    compactCentroidsKernel<<<grid2, block2>>>(
+    compactCentroidsKernel<<<grid2, block2, 0, stream>>>(
         d_sum_x,
         d_sum_y,
         d_count,
@@ -182,7 +187,6 @@ thrust::device_vector<Centroid> compute_centroids(const uint32_t *d_labels_in, u
         thrust::raw_pointer_cast(d_centroids.data()),
         num_valid
     );
-    cudaDeviceSynchronize();
     DETAILED_TIMER_STOP(compact_centroids, "Compact centroids");
 
     // thrust::host_vector<Centroid> h_centroids(num_valid);
