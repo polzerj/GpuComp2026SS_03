@@ -173,7 +173,8 @@ thrust::host_vector<PieceCorners> detect_corners(
     uint32_t peak_detection_radius,
     float prominence_threshold,
     uint32_t distance_threshold,
-    pipeline_workspace_t& ws)
+    pipeline_workspace_t& ws,
+    cudaStream_t stream)
 {
     uint32_t num_points = static_cast<uint32_t>(h_smoothed.size());
 
@@ -195,7 +196,7 @@ thrust::host_vector<PieceCorners> detect_corners(
     uint32_t threads = 256;
     uint32_t blocks = (num_points + threads - 1) / threads;
 
-    // find_corners<<<blocks, threads>>>(
+    // find_corners<<<blocks, threads, 0, stream>>>(
     //     thrust::raw_pointer_cast(d_smoothed.data()),
     //     thrust::raw_pointer_cast(d_corners.data()),
     //     thrust::raw_pointer_cast(d_scores.data()),
@@ -207,7 +208,7 @@ thrust::host_vector<PieceCorners> detect_corners(
     // thrust::host_vector<uint8_t> h_corners_bool = d_corners;
     // thrust::host_vector<float> h_scores = d_scores;
 
-    find_corners<<<blocks, threads>>>(
+    find_corners<<<blocks, threads, 0, stream>>>(
         thrust::raw_pointer_cast(d_smoothed.data()),
         d_corners,
         d_scores,
@@ -216,24 +217,26 @@ thrust::host_vector<PieceCorners> detect_corners(
         num_points
     );
 
-    cudaDeviceSynchronize();
-
     thrust::host_vector<uint8_t> h_corners_bool(num_points);
     thrust::host_vector<float> h_scores(num_points);
 
-    cudaMemcpy(
+    CUDA_CHECK(cudaMemcpyAsync(
         h_corners_bool.data(),
         d_corners,
         static_cast<size_t>(num_points) * sizeof(uint8_t),
-        cudaMemcpyDeviceToHost
-    );
+        cudaMemcpyDeviceToHost,
+        stream
+    ));
 
-    cudaMemcpy(
+    CUDA_CHECK(cudaMemcpyAsync(
         h_scores.data(),
         d_scores,
         static_cast<size_t>(num_points) * sizeof(float),
-        cudaMemcpyDeviceToHost
-    );
+        cudaMemcpyDeviceToHost,
+        stream
+    ));
+
+    CUDA_CHECK(cudaStreamSynchronize(stream));
 
     DETAILED_TIMER_STOP(corner_detection, "Corner Detection");
 
@@ -285,4 +288,15 @@ thrust::host_vector<PieceCorners> detect_corners(
     DETAILED_TIMER_STOP(selecting_corners, "Selecting Corners for Each Piece");
 
     return h_corners;
+}
+
+thrust::host_vector<PieceCorners> detect_corners(
+    thrust::host_vector<ContourSignalPointExt> &h_smoothed,
+    thrust::device_vector<ContourSignalPointExt> &d_smoothed,
+    uint32_t peak_detection_radius,
+    float prominence_threshold,
+    uint32_t distance_threshold,
+    pipeline_workspace_t& ws)
+{
+    return detect_corners(h_smoothed, d_smoothed, peak_detection_radius, prominence_threshold, distance_threshold, ws, 0);
 }

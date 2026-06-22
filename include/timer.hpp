@@ -212,6 +212,9 @@ struct gpu_timer_t {
 #define DEBUG_TIMER_START(name)                                                 \
     GPU_TIMER_START(name)
 
+#define DEBUG_TIMER_START_STREAM(name, stream)                                  \
+    GPU_TIMER_START_STREAM(name, stream)
+
 #define DEBUG_TIMER_STOP(name, label)                                           \
     GPU_TIMER_STOP(name, label)
 
@@ -220,14 +223,18 @@ struct gpu_timer_t {
 #define DEBUG_DETAILED_TIMER_START(name)                                        \
     DETAILED_GPU_TIMER_START(name)
 
+#define DEBUG_DETAILED_TIMER_START_STREAM(name, stream)                         \
+    DETAILED_GPU_TIMER_START_STREAM(name, stream)
+
 #define DEBUG_DETAILED_TIMER_STOP(name, label)                                  \
     DETAILED_GPU_TIMER_STOP(name, label)
 
 #define DETAILED_TIMER_START(name)                                              \
     DETAILED_GPU_TIMER_START(name)
 
+#define DETAILED_TIMER_START_STREAM(name, stream)                               \
+    DETAILED_GPU_TIMER_START_STREAM(name, stream)
+
 #define DETAILED_TIMER_STOP(name, label)                                        \
     DETAILED_GPU_TIMER_STOP(name, label)
 
-#define DETAILED_TIMER_START_STREAM(name, stream)                               \
-    DETAILED_GPU_TIMER_START_STREAM(name, stream)

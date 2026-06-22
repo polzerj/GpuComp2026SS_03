@@ -346,7 +346,7 @@ __global__ void unpack_data(const uint2* src, uint32_t* p, uint32_t* r, uint32_t
 
 //     // cudaMemcpy(d_image_data_in, global_labels, pixel_count*sizeof(uint32_t), cudaMemcpyHostToDevice);
 //     DETAILED_TIMER_START(init_list_and_extract_boundaries);
-//     init_pointer_list_and_extract_boundaries<<<grid, block>>>(global_labels, image_width, image_height, device_data);
+//     init_pointer_list_and_extract_boundaries<<<grid, block, 0, stream>>>(global_labels, image_width, image_height, device_data);
 //     cudaDeviceSynchronize();
 //     DETAILED_TIMER_STOP(init_list_and_extract_boundaries, "Init pointer list and extract boundaries");
 
@@ -567,7 +567,7 @@ __global__ void walk_boundary_pieces_kernel(
 }
 
 
-ptr_jmp_out_t pointer_jumping_old(uint32_t *global_labels, uint32_t image_width, uint32_t image_height, pipeline_workspace_t& ws)
+ptr_jmp_out_t pointer_jumping_old(uint32_t *global_labels, uint32_t image_width, uint32_t image_height, pipeline_workspace_t& ws, cudaStream_t stream)
 {
     uint32_t pixel_count = image_height * image_width;
     size_t bytes = pixel_count * sizeof(uint32_t);
@@ -595,7 +595,7 @@ ptr_jmp_out_t pointer_jumping_old(uint32_t *global_labels, uint32_t image_width,
     // cudaMalloc(&d_work_b, pixel_count * sizeof(uint2));
     // uint32_t *d_predecessors;
     // cudaMalloc(&d_predecessors, bytes);
-    // cudaMemset(d_predecessors, 0xFF, bytes); // NIL
+    // CUDA_CHECK(cudaMemsetAsync(d_predecessors, 0xFF, bytes, stream)); // NIL
     out.boundaries = ws.d_ptr_boundaries.data();
     out.ranks = ws.d_ptr_ranks.data();
     out.successors = ws.d_ptr_successors.data();
@@ -604,27 +604,27 @@ ptr_jmp_out_t pointer_jumping_old(uint32_t *global_labels, uint32_t image_width,
     uint2* d_work_a = ws.d_ptr_work_a.data();
     uint2* d_work_b = ws.d_ptr_work_b.data();
     uint32_t* d_done = ws.d_ptr_done.data();
-    cudaMemset(out.boundaries, 0, bytes);
-    cudaMemset(out.ranks, 0, bytes);
-    cudaMemset(out.successors, 0xFF, bytes);
-    cudaMemset(d_predecessors, 0xFF, bytes);
+    CUDA_CHECK(cudaMemsetAsync(out.boundaries, 0, bytes, stream));
+    CUDA_CHECK(cudaMemsetAsync(out.ranks, 0, bytes, stream));
+    CUDA_CHECK(cudaMemsetAsync(out.successors, 0xFF, bytes, stream));
+    CUDA_CHECK(cudaMemsetAsync(d_predecessors, 0xFF, bytes, stream));
     DETAILED_TIMER_STOP(malloc, "Allocate arrays");
     
 
     // 1. Init and Build Predecessors 
     DETAILED_TIMER_START(init_list_and_extract_boundaries);
-    init_pointer_list_and_extract_boundaries<<<grid, block>>>(global_labels, image_width, image_height, out);
+    init_pointer_list_and_extract_boundaries<<<grid, block, 0, stream>>>(global_labels, image_width, image_height, out);
     DETAILED_TIMER_STOP(init_list_and_extract_boundaries, "Init pointer list and extract boundaries");
     
     DETAILED_TIMER_START(buildandbreak);
-    build_predecessors<<<blocks_1d, threads_1d>>>(out.boundaries, out.successors, d_predecessors, pixel_count);
-    break_roots_by_label<<<blocks_1d, threads_1d>>>(out.boundaries, d_predecessors, out.ranks, pixel_count);
+    build_predecessors<<<blocks_1d, threads_1d, 0, stream>>>(out.boundaries, out.successors, d_predecessors, pixel_count);
+    break_roots_by_label<<<blocks_1d, threads_1d, 0, stream>>>(out.boundaries, d_predecessors, out.ranks, pixel_count);
     DETAILED_TIMER_STOP(buildandbreak, "Build Predecessors| Break roots by label");
 
  
     
     DETAILED_TIMER_START(pointer_jumping);
-    pack_data<<<blocks_1d, threads_1d>>>(d_predecessors, out.ranks, d_work_a, pixel_count);
+    pack_data<<<blocks_1d, threads_1d, 0, stream>>>(d_predecessors, out.ranks, d_work_a, pixel_count);
 
     //uint32_t *d_done;
     //cudaMalloc(&d_done, sizeof(uint32_t));
@@ -632,20 +632,21 @@ ptr_jmp_out_t pointer_jumping_old(uint32_t *global_labels, uint32_t image_width,
     uint32_t rounds = 32 - __builtin_clz(pixel_count); 
     for (uint32_t r = 0; r < rounds; ++r) {
         uint32_t h_done = 1;
-        cudaMemcpy(d_done, &h_done, sizeof(uint32_t), cudaMemcpyHostToDevice);
+        CUDA_CHECK(cudaMemcpyAsync(d_done, &h_done, sizeof(uint32_t), cudaMemcpyHostToDevice, stream));
 
-        list_rank_step_packed<<<blocks_1d, threads_1d>>>(
+        list_rank_step_packed<<<blocks_1d, threads_1d, 0, stream>>>(
             out.boundaries, d_work_a, d_work_b, pixel_count, d_done
         );
 
-        cudaMemcpy(&h_done, d_done, sizeof(uint32_t), cudaMemcpyDeviceToHost);
+        CUDA_CHECK(cudaMemcpyAsync(&h_done, d_done, sizeof(uint32_t), cudaMemcpyDeviceToHost, stream));
+        CUDA_CHECK(cudaStreamSynchronize(stream));
         std::swap(d_work_a, d_work_b);
         if (h_done == 1) break;
     }
 
     // 3. Final Result Unpack
     // Results are in d_work_a because of the swap at the end of the loop
-    unpack_data<<<blocks_1d, threads_1d>>>(d_work_a, out.successors, out.ranks, pixel_count);
+    unpack_data<<<blocks_1d, threads_1d, 0, stream>>>(d_work_a, out.successors, out.ranks, pixel_count);
     DETAILED_TIMER_STOP(pointer_jumping, "Pointerjumping");
     // Cleanup
     // cudaFree(d_predecessors);
@@ -658,7 +659,7 @@ ptr_jmp_out_t pointer_jumping_old(uint32_t *global_labels, uint32_t image_width,
 
 
 //sequential list ranking
-ptr_jmp_out_t pointer_jumping(uint32_t *global_labels, uint32_t image_width, uint32_t image_height, pipeline_workspace_t& ws)
+ptr_jmp_out_t pointer_jumping(uint32_t *global_labels, uint32_t image_width, uint32_t image_height, pipeline_workspace_t& ws, cudaStream_t stream)
 {
     uint32_t pixel_count = image_height * image_width;
     size_t bytes = pixel_count * sizeof(uint32_t);
@@ -680,22 +681,31 @@ ptr_jmp_out_t pointer_jumping(uint32_t *global_labels, uint32_t image_width, uin
     out.successors = ws.d_ptr_successors.data();
 
     // Reset ranks to 0
-    cudaMemset(out.ranks, 0, bytes);
+    CUDA_CHECK(cudaMemsetAsync(out.ranks, 0, bytes, stream));
 
     // Step 1: Extract boundaries and identify immediate successors (neighbors)
     DETAILED_TIMER_START(init_list);
-    init_pointer_list_and_extract_boundaries<<<grid2d, block2d>>>(global_labels, image_width, image_height, out);
+    init_pointer_list_and_extract_boundaries<<<grid2d, block2d, 0, stream>>>(global_labels, image_width, image_height, out);
     DETAILED_TIMER_STOP(init_list, "Extract boundaries and successors");
 
     // Step 2: One thread per piece walk
     // This replaces the pointer-jumping loop entirely.
     DETAILED_TIMER_START(piece_walk);
-    walk_boundary_pieces_kernel<<<blocks1d, threads1d>>>(
+    walk_boundary_pieces_kernel<<<blocks1d, threads1d, 0, stream>>>(
         out.boundaries, out.successors, out.ranks, pixel_count
     );
-    cudaDeviceSynchronize();
     DETAILED_TIMER_STOP(piece_walk, "Piece-wise Boundary Walk");
 
     return out;
+}
+
+ptr_jmp_out_t pointer_jumping(uint32_t *global_labels, uint32_t image_width, uint32_t image_height, pipeline_workspace_t& ws)
+{
+    return pointer_jumping(global_labels, image_width, image_height, ws, 0);
+}
+
+ptr_jmp_out_t pointer_jumping_old(uint32_t *global_labels, uint32_t image_width, uint32_t image_height, pipeline_workspace_t& ws)
+{
+    return pointer_jumping_old(global_labels, image_width, image_height, ws, 0);
 }
 #endif

@@ -12,6 +12,7 @@
 #include <thrust/sort.h>
 #include <thrust/fill.h>
 #include <thrust/iterator/counting_iterator.h>
+#include <thrust/system/cuda/execution_policy.h>
 
 #include "timer.hpp"
 
@@ -128,9 +129,11 @@ thrust::device_vector<ContourSignalPoint> sort_distances(
     const thrust::device_vector<Centroid> &d_centroids,
     uint32_t width,
     uint32_t height,
-    pipeline_workspace_t& ws)
+    pipeline_workspace_t& ws,
+    cudaStream_t stream)
 {
     uint32_t pixel_count = width * height;
+    auto policy = thrust::cuda::par.on(stream);
 
     if (pixel_count == 0 || d_centroids.empty())
     {
@@ -172,20 +175,19 @@ thrust::device_vector<ContourSignalPoint> sort_distances(
     thrust::device_ptr<float> center_y_begin =
         thrust::device_pointer_cast(d_center_y);
 
-    thrust::fill(center_x_begin, center_x_begin + pixel_count, -1.0f);
-    thrust::fill(center_y_begin, center_y_begin + pixel_count, -1.0f);
+    thrust::fill(policy, center_x_begin, center_x_begin + pixel_count, -1.0f);
+    thrust::fill(policy, center_y_begin, center_y_begin + pixel_count, -1.0f);
 
     uint32_t threads = 256;
     uint32_t centroid_blocks = (static_cast<uint32_t>(d_centroids.size()) + threads - 1) / threads;
 
-    scatter_centroids_by_label<<<centroid_blocks, threads>>>(
+    scatter_centroids_by_label<<<centroid_blocks, threads, 0, stream>>>(
         thrust::raw_pointer_cast(d_centroids.data()),
         static_cast<uint32_t>(d_centroids.size()),
         d_center_x,
         d_center_y
     );
 
-    cudaDeviceSynchronize();
     DETAILED_TIMER_STOP(scatter_centroids, "Scatter centroids by label");
 
     // ---------------------------------------------------------------------
@@ -250,6 +252,7 @@ thrust::device_vector<ContourSignalPoint> sort_distances(
         thrust::device_pointer_cast(d_boundary_ids);
 
     auto boundary_end = thrust::copy_if(
+        policy,
         ids_begin,
         ids_end,
         boundary_ids_begin,
@@ -289,7 +292,7 @@ thrust::device_vector<ContourSignalPoint> sort_distances(
 
     uint32_t signal_blocks = (num_boundary + threads - 1) / threads;
 
-    // make_signal_keys_and_values<<<signal_blocks, threads>>>(
+    // make_signal_keys_and_values<<<signal_blocks, threads, 0, stream>>>(
     //     thrust::raw_pointer_cast(d_boundary_ids.data()),
     //     d_boundaries,
     //     d_ranks,
@@ -299,7 +302,7 @@ thrust::device_vector<ContourSignalPoint> sort_distances(
     //     thrust::raw_pointer_cast(d_points.data()),
     //     width,
     //     num_boundary);
-    make_signal_keys_and_values<<<signal_blocks, threads>>>(
+    make_signal_keys_and_values<<<signal_blocks, threads, 0, stream>>>(
         d_boundary_ids,
         d_boundaries,
         d_ranks,
@@ -317,6 +320,7 @@ thrust::device_vector<ContourSignalPoint> sort_distances(
     //     d_keys.end(),
     //     d_points.begin());
     thrust::sort_by_key(
+        policy,
         keys_begin,
         keys_begin + num_boundary,
         d_points.begin()
@@ -326,4 +330,15 @@ thrust::device_vector<ContourSignalPoint> sort_distances(
 
     DETAILED_TIMER_STOP(sort_keys_and_values, "Sort keys and values");
     return d_points;
+}
+
+thrust::device_vector<ContourSignalPoint> sort_distances(
+    const uint32_t *d_boundaries,
+    const uint32_t *d_ranks,
+    const thrust::device_vector<Centroid> &d_centroids,
+    uint32_t width,
+    uint32_t height,
+    pipeline_workspace_t& ws)
+{
+    return sort_distances(d_boundaries, d_ranks, d_centroids, width, height, ws, 0);
 }

@@ -110,7 +110,7 @@ __global__ void dilate(const brightness_t *input, brightness_t *output, int widt
     output[x + width * y] = make_white ? 255 : 0;
 }
 
-uint8_t *piece_segmentation(const brightness_t *d_input, int width, int height, size_t kernel_size, pipeline_workspace_t& ws)
+uint8_t *piece_segmentation(const brightness_t *d_input, int width, int height, size_t kernel_size, pipeline_workspace_t& ws, cudaStream_t stream)
 {
     // allocate memory
     int num_pixels = height * width;
@@ -134,7 +134,7 @@ uint8_t *piece_segmentation(const brightness_t *d_input, int width, int height, 
 
     // Morphological open
     DETAILED_TIMER_START(erode);
-    erode<<<grid, block, shared_mem_bytes>>>(d_input, d_tmp, width, height, kernel_size);
+    erode<<<grid, block, shared_mem_bytes, stream>>>(d_input, d_tmp, width, height, kernel_size);
     DETAILED_TIMER_STOP(erode, "erode");
     // cudaError_t err = cudaGetLastError();
     // if(err != cudaSuccess){
@@ -146,7 +146,7 @@ uint8_t *piece_segmentation(const brightness_t *d_input, int width, int height, 
     // }
     // erode<<<grid,block, shared_mem_bytes>>>(d_tmp, d_output, image.width, image.height, kernel_size);
 
-    // dilate<<<grid, block, shared_mem_bytes>>>(d_output, d_tmp, image.width, image.height, kernel_size);
+    // dilate<<<grid, block, shared_mem_bytes, stream>>>(d_output, d_tmp, image.width, image.height, kernel_size);
     //  err = cudaGetLastError();
     //  if(err != cudaSuccess){
     //      printf("Dilate kernel launch failed: %s\n", cudaGetErrorString(err));
@@ -156,7 +156,7 @@ uint8_t *piece_segmentation(const brightness_t *d_input, int width, int height, 
     //      printf("Runtime error: %s\n", cudaGetErrorString(err));
     //  }
     DETAILED_TIMER_START(dilate);
-    dilate<<<grid, block, shared_mem_bytes>>>(d_tmp, d_output, width, height, kernel_size);
+    dilate<<<grid, block, shared_mem_bytes, stream>>>(d_tmp, d_output, width, height, kernel_size);
     DETAILED_TIMER_STOP(dilate, "dilate");
 
     // Copy results back from GPU to CPU
@@ -166,4 +166,9 @@ uint8_t *piece_segmentation(const brightness_t *d_input, int width, int height, 
     //cudaFree(d_tmp);
     // cudaFree(d_output);
     return d_output;
+}
+
+uint8_t *piece_segmentation(const brightness_t *d_input, int width, int height, size_t kernel_size, pipeline_workspace_t& ws)
+{
+    return piece_segmentation(d_input, width, height, kernel_size, ws, 0);
 }

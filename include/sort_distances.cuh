@@ -1,8 +1,9 @@
 #pragma once
 
 #include <cstdint>
+#include <cuda_runtime.h>
 #include <thrust/host_vector.h>
-
+#include <thrust/device_vector.h>
 #include "centroid.cuh"
 #include "pipeline_workspace.hpp"
 
@@ -13,6 +14,16 @@ struct ContourSignalPoint {
     uint32_t label;
     uint32_t rank;
 };
+
+thrust::device_vector<ContourSignalPoint> sort_distances(
+    const uint32_t* d_boundaries,
+    const uint32_t* d_ranks,
+    const thrust::device_vector<Centroid>& d_centroids,
+    uint32_t width,
+    uint32_t height,
+    pipeline_workspace_t& ws,
+    cudaStream_t stream
+);
 
 thrust::device_vector<ContourSignalPoint> sort_distances(
     const uint32_t* d_boundaries,

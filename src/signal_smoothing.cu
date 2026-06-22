@@ -110,7 +110,8 @@ __global__ void smooth_signal_kernel(
 thrust::device_vector<ContourSignalPointExt> smooth_signal(
     const thrust::device_vector<ContourSignalPoint>& d_input,
     uint32_t smoothing_radius,
-    pipeline_workspace_t& ws
+    pipeline_workspace_t& ws,
+    cudaStream_t stream
 ) {
     uint32_t num_points = static_cast<uint32_t>(d_input.size());
 
@@ -122,10 +123,11 @@ thrust::device_vector<ContourSignalPointExt> smooth_signal(
 
     uint32_t* d_length_at_start = ws.d_smooth_length_at_start.data();
 
-    CUDA_CHECK(cudaMemset(
+    CUDA_CHECK(cudaMemsetAsync(
         d_length_at_start,
         0,
-        static_cast<size_t>(num_points) * sizeof(uint32_t)
+        static_cast<size_t>(num_points) * sizeof(uint32_t),
+        stream
     ));
 
     thrust::device_vector<ContourSignalPointExt> d_output(num_points);
@@ -135,7 +137,7 @@ thrust::device_vector<ContourSignalPointExt> smooth_signal(
 
     DETAILED_TIMER_START(mark_piece_lengths);
 
-    mark_piece_lengths_by_start_kernel<<<blocks, threads>>>(
+    mark_piece_lengths_by_start_kernel<<<blocks, threads, 0, stream>>>(
         thrust::raw_pointer_cast(d_input.data()),
         num_points,
         d_length_at_start
@@ -147,7 +149,7 @@ thrust::device_vector<ContourSignalPointExt> smooth_signal(
 
     DETAILED_TIMER_START(smooth_signal_kernel);
 
-    smooth_signal_kernel<<<blocks, threads>>>(
+    smooth_signal_kernel<<<blocks, threads, 0, stream>>>(
         thrust::raw_pointer_cast(d_input.data()),
         thrust::raw_pointer_cast(d_output.data()),
         d_length_at_start,
@@ -160,4 +162,12 @@ thrust::device_vector<ContourSignalPointExt> smooth_signal(
     DETAILED_TIMER_STOP(smooth_signal_kernel, "Smooth signal kernel");
 
     return d_output;
+}
+
+thrust::device_vector<ContourSignalPointExt> smooth_signal(
+    const thrust::device_vector<ContourSignalPoint>& d_input,
+    uint32_t smoothing_radius,
+    pipeline_workspace_t& ws
+) {
+    return smooth_signal(d_input, smoothing_radius, ws, 0);
 }

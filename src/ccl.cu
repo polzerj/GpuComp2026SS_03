@@ -248,7 +248,7 @@ __global__ void block_border_reduction_y(uint32_t *global_labels, uint8_t *globa
     }
 }
 
-uint32_t *playne_ccl(uint8_t *d_image, uint32_t width, uint32_t height, pipeline_workspace_t& ws)
+uint32_t *playne_ccl(uint8_t *d_image, uint32_t width, uint32_t height, pipeline_workspace_t& ws, cudaStream_t stream)
 {
 
     // setup all the necessary memory on device and host
@@ -273,26 +273,20 @@ uint32_t *playne_ccl(uint8_t *d_image, uint32_t width, uint32_t height, pipeline
 
     // cudaMemcpy(d_image, grayImage.data.data(), pixel_count*sizeof(uint8_t), cudaMemcpyHostToDevice);
 
-    cudaStream_t stream1, stream2;
-    cudaStreamCreate(&stream1);
-    cudaStreamCreate(&stream2);
-
     DETAILED_TIMER_START(local_playne_ccl);
-    local_blocked_ccl<<<grid, block, block.x * block.y * sizeof(uint32_t)>>>(d_labels, d_image, width, height);
-    cudaDeviceSynchronize();
+    local_blocked_ccl<<<grid, block, block.x * block.y * sizeof(uint32_t), stream>>>(d_labels, d_image, width, height);
     DETAILED_TIMER_STOP(local_playne_ccl, "Local Blocked CCL");
 
-    // Label Reduction
+    // Label Reduction. Keep this on the image stream first; it is safer than
+    // creating internal streams and accidentally racing the following propagation.
     DETAILED_TIMER_START(border_reduction);
-    block_border_reduction_y<<<border_grid_y, block, 0, stream1>>>(d_labels, d_image, width, height);
-    block_border_reduction_x<<<border_grid_x, block, 0, stream2>>>(d_labels, d_image, width, height);
-    cudaDeviceSynchronize();
+    block_border_reduction_y<<<border_grid_y, block, 0, stream>>>(d_labels, d_image, width, height);
+    block_border_reduction_x<<<border_grid_x, block, 0, stream>>>(d_labels, d_image, width, height);
     DETAILED_TIMER_STOP(border_reduction, "Border Reduction");
 
     // Analysis
     DETAILED_TIMER_START(label_propagation);
-    propagate_labels<<<grid, block>>>(d_labels, width, height);
-    cudaDeviceSynchronize();
+    propagate_labels<<<grid, block, 0, stream>>>(d_labels, width, height);
     DETAILED_TIMER_STOP(label_propagation, "Label Propagation");
 
     // 9. Copy results back to host
@@ -301,10 +295,12 @@ uint32_t *playne_ccl(uint8_t *d_image, uint32_t width, uint32_t height, pipeline
     // 10. Cleanup
     // cudaFree(d_labels);
     // cudaFree(d_image);
-    cudaStreamDestroy(stream1);
-    cudaStreamDestroy(stream2);
-
     return d_labels;
+}
+
+uint32_t *playne_ccl(uint8_t *d_image, uint32_t width, uint32_t height, pipeline_workspace_t& ws)
+{
+    return playne_ccl(d_image, width, height, ws, 0);
 }
 
 grayscale_image_t visualize_cll(uint32_t *global_labels, const grayscale_image_t &grayImage)

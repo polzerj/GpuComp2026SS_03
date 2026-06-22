@@ -2,6 +2,8 @@
 #define BOUNDARY
 #include <cstdint>
 #include "types.hpp"
+#include "timer.hpp"
+#include <cuda_runtime.h>
 
 //---------------------------------------------------------------------------------
 // NOTICE OBSOLETE ==> functionality is handled withing the init for pointer jumping
@@ -66,7 +68,7 @@ __global__ void boundary_extraction(uint32_t * global_labels, uint32_t * boundar
     }
 }
 
-void extract_boundary( uint32_t * global_labels, uint32_t * extracted_boundary_image, uint32_t image_width, uint32_t image_height) {
+void extract_boundary( uint32_t * global_labels, uint32_t * extracted_boundary_image, uint32_t image_width, uint32_t image_height, cudaStream_t stream) {
     //setup all the necessary memory on device and host
     uint32_t pixel_count = image_height * image_width;
 	
@@ -81,16 +83,20 @@ void extract_boundary( uint32_t * global_labels, uint32_t * extracted_boundary_i
     cudaMalloc((void**) &d_output, pixel_count* sizeof(uint32_t));
     cudaMalloc((void**) &d_input,  pixel_count * sizeof(uint32_t));
 
-    cudaMemcpy(d_input, global_labels, pixel_count*sizeof(uint32_t), cudaMemcpyHostToDevice);
+    CUDA_CHECK(cudaMemcpyAsync(d_input, global_labels, pixel_count*sizeof(uint32_t), cudaMemcpyHostToDevice, stream));
 
-    boundary_extraction <<<grid,block>>>(d_input,d_output,image_width,image_height);
+    boundary_extraction <<<grid,block,0,stream>>>(d_input,d_output,image_width,image_height);
 
-    cudaMemcpy(extracted_boundary_image, d_output, pixel_count * sizeof(uint32_t), cudaMemcpyDeviceToHost);
+    CUDA_CHECK(cudaMemcpyAsync(extracted_boundary_image, d_output, pixel_count * sizeof(uint32_t), cudaMemcpyDeviceToHost, stream));
+    CUDA_CHECK(cudaStreamSynchronize(stream));
 
     cudaFree(d_input);
     cudaFree(d_output);
 
 }
 
+void extract_boundary( uint32_t * global_labels, uint32_t * extracted_boundary_image, uint32_t image_width, uint32_t image_height) {
+    extract_boundary(global_labels, extracted_boundary_image, image_width, image_height, 0);
+}
 
 #endif
