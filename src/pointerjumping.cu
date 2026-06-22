@@ -566,7 +566,7 @@ __global__ void walk_boundary_pieces_kernel(
     }
 }
 
-
+/*
 ptr_jmp_out_t pointer_jumping_old(uint32_t *global_labels, uint32_t image_width, uint32_t image_height, pipeline_workspace_t& ws)
 {
     uint32_t pixel_count = image_height * image_width;
@@ -656,7 +656,7 @@ ptr_jmp_out_t pointer_jumping_old(uint32_t *global_labels, uint32_t image_width,
 
     return out;
 }
-
+*/
 
 //sequential list ranking
 ptr_jmp_out_t pointer_jumping(uint32_t *global_labels, uint32_t image_width, uint32_t image_height, pipeline_workspace_t& ws)

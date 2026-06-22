@@ -147,7 +147,7 @@ static void upload_and_draw_pixels(
         "cudaMemcpy issued pixels"
     );
 
-    check_cuda(cudaStreamSynchronize(stream));
+    check_cuda(cudaStreamSynchronize(stream), "cudaMemcpy issued pixels sync");
 
     uint32_t threads = 256;
     uint32_t blocks =
@@ -736,7 +736,7 @@ void visualizer_exp(
         "cudaMemcpy visualizer image copy"
     );
 
-    check_cuda(cudaStreamSynchronize(stream));
+    check_cuda(cudaStreamSynchronize(stream), "cudaMemcpy visualizer image sync");
 
     uchar3* d_image = ws.d_image_copy;
 

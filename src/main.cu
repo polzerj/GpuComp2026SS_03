@@ -412,7 +412,7 @@ void process_image(const std::string &image_path, image_context_t &ctx)
     //------------------------------------------------------
     DEBUG_TIMER_START(pointer_jumping);
     ptr_jmp_out_t out_d = pointer_jumping(global_labels_d, image_width, image_height, ctx.ws);
-    CUDA_CHECK(cudaStreamSynchronize(stream));
+    CUDA_CHECK(cudaStreamSynchronize(ctx.stream));
     DEBUG_TIMER_STOP(pointer_jumping, "Pointer Jumping");
 
     //cudaFree(global_labels_d);
@@ -515,7 +515,7 @@ void process_image(const std::string &image_path, image_context_t &ctx)
         ctx.jpeg_encoder);
     //cudaFree(original_image_d.data);
 
-    CUDA_CHECK(cudaStreamSynchronize(stream));
+    CUDA_CHECK(cudaStreamSynchronize(ctx.stream));
 
     CPU_TIMER_STOP(visualization, "Visualization and saving output image");
 
