@@ -1,0 +1,125 @@
+Benchmark Results:
+==================
+single.JPG - Preprocessing: 2.535632 seconds
+single.JPG - Boundary Detection: 12.089936 seconds
+single.JPG - Piece Classification: 0.056343 seconds
+single.JPG - Visualization: 19.025095 seconds
+single.JPG: 33.707459 seconds
+18_p2.jpg - Preprocessing: 140.989470 seconds
+18_p2.jpg - Boundary Detection: 677.052323 seconds
+18_p2.jpg - Piece Classification: 6.353919 seconds
+18_p2.jpg - Visualization: 20.271936 seconds
+18_p2.jpg: 844.668215 seconds
+6_p2.jpg - Preprocessing: 141.542308 seconds
+6_p2.jpg - Boundary Detection: 680.395860 seconds
+6_p2.jpg - Piece Classification: 6.358706 seconds
+6_p2.jpg - Visualization: 22.024170 seconds
+6_p2.jpg: 850.321647 seconds
+3_p1.jpg - Preprocessing: 165.702645 seconds
+3_p1.jpg - Boundary Detection: 672.830353 seconds
+3_p1.jpg - Piece Classification: 9.172095 seconds
+3_p1.jpg - Visualization: 23.870884 seconds
+3_p1.jpg: 871.576929 seconds
+2_p2.jpg - Preprocessing: 143.195160 seconds
+2_p2.jpg - Boundary Detection: 698.440176 seconds
+2_p2.jpg - Piece Classification: 6.739159 seconds
+2_p2.jpg - Visualization: 24.734940 seconds
+2_p2.jpg: 873.110564 seconds
+4_p2.jpg - Preprocessing: 144.240043 seconds
+4_p2.jpg - Boundary Detection: 671.670257 seconds
+4_p2.jpg - Piece Classification: 6.093100 seconds
+4_p2.jpg - Visualization: 26.467517 seconds
+4_p2.jpg: 848.471673 seconds
+8_p1.jpg - Preprocessing: 143.634686 seconds
+8_p1.jpg - Boundary Detection: 680.265378 seconds
+8_p1.jpg - Piece Classification: 8.866536 seconds
+8_p1.jpg - Visualization: 19.432624 seconds
+8_p1.jpg: 852.199809 seconds
+12_p1.jpg - Preprocessing: 143.267236 seconds
+12_p1.jpg - Boundary Detection: 679.775103 seconds
+12_p1.jpg - Piece Classification: 9.312539 seconds
+12_p1.jpg - Visualization: 20.625830 seconds
+12_p1.jpg: 852.981320 seconds
+11_p2.jpg - Preprocessing: 141.909563 seconds
+11_p2.jpg - Boundary Detection: 682.171750 seconds
+11_p2.jpg - Piece Classification: 7.198265 seconds
+11_p2.jpg - Visualization: 22.970384 seconds
+11_p2.jpg: 854.250553 seconds
+14_p2.jpg - Preprocessing: 141.462394 seconds
+14_p2.jpg - Boundary Detection: 678.210345 seconds
+14_p2.jpg - Piece Classification: 5.648402 seconds
+14_p2.jpg - Visualization: 21.605584 seconds
+14_p2.jpg: 846.927311 seconds
+17_p1.jpg - Preprocessing: 139.615788 seconds
+17_p1.jpg - Boundary Detection: 683.522043 seconds
+17_p1.jpg - Piece Classification: 8.718226 seconds
+17_p1.jpg - Visualization: 22.307013 seconds
+17_p1.jpg: 854.163698 seconds
+5_p1.jpg - Preprocessing: 141.661121 seconds
+5_p1.jpg - Boundary Detection: 676.992124 seconds
+5_p1.jpg - Piece Classification: 9.457385 seconds
+5_p1.jpg - Visualization: 23.105878 seconds
+5_p1.jpg: 851.217126 seconds
+5_p2.jpg - Preprocessing: 140.415597 seconds
+5_p2.jpg - Boundary Detection: 669.634128 seconds
+5_p2.jpg - Piece Classification: 6.305289 seconds
+5_p2.jpg - Visualization: 20.536380 seconds
+5_p2.jpg: 836.892154 seconds
+3_p2.jpg - Preprocessing: 140.250988 seconds
+3_p2.jpg - Boundary Detection: 684.624865 seconds
+3_p2.jpg - Piece Classification: 6.013199 seconds
+3_p2.jpg - Visualization: 22.104006 seconds
+3_p2.jpg: 852.993859 seconds
+16_p2.jpg - Preprocessing: 142.964755 seconds
+16_p2.jpg - Boundary Detection: 674.243605 seconds
+16_p2.jpg - Piece Classification: 6.453269 seconds
+16_p2.jpg - Visualization: 22.446731 seconds
+16_p2.jpg: 846.109139 seconds
+19_p1.jpg - Preprocessing: 143.583367 seconds
+19_p1.jpg - Boundary Detection: 676.158540 seconds
+19_p1.jpg - Piece Classification: 11.021091 seconds
+19_p1.jpg - Visualization: 24.312412 seconds
+19_p1.jpg: 855.076213 seconds
+9_p1.jpg - Preprocessing: 144.809798 seconds
+9_p1.jpg - Boundary Detection: 677.323860 seconds
+9_p1.jpg - Piece Classification: 8.989160 seconds
+9_p1.jpg - Visualization: 24.847801 seconds
+9_p1.jpg: 855.971304 seconds
+15_p1.jpg - Preprocessing: 144.452883 seconds
+15_p1.jpg - Boundary Detection: 681.377591 seconds
+15_p1.jpg - Piece Classification: 9.583651 seconds
+15_p1.jpg - Visualization: 23.760610 seconds
+15_p1.jpg: 859.175417 seconds
+4_p1.jpg - Preprocessing: 143.320979 seconds
+4_p1.jpg - Boundary Detection: 676.491196 seconds
+4_p1.jpg - Piece Classification: 9.268551 seconds
+4_p1.jpg - Visualization: 24.791621 seconds
+4_p1.jpg: 853.873001 seconds
+10_p2.jpg - Preprocessing: 143.333141 seconds
+10_p2.jpg - Boundary Detection: 673.700939 seconds
+10_p2.jpg - Piece Classification: 6.686810 seconds
+10_p2.jpg - Visualization: 24.448051 seconds
+10_p2.jpg: 848.169527 seconds
+9_p2.jpg - Preprocessing: 141.883721 seconds
+9_p2.jpg - Boundary Detection: 673.442981 seconds
+9_p2.jpg - Piece Classification: 6.929087 seconds
+9_p2.jpg - Visualization: 27.081455 seconds
+9_p2.jpg: 849.337952 seconds
+13_p1.jpg - Preprocessing: 142.290769 seconds
+13_p1.jpg - Boundary Detection: 688.744063 seconds
+13_p1.jpg - Piece Classification: 9.000220 seconds
+13_p1.jpg - Visualization: 31.437199 seconds
+13_p1.jpg: 871.472949 seconds
+20_p2.jpg - Preprocessing: 142.870004 seconds
+20_p2.jpg - Boundary Detection: 675.390491 seconds
+20_p2.jpg - Piece Classification: 7.501475 seconds
+20_p2.jpg - Visualization: 35.048053 seconds
+20_p2.jpg: 860.811035 seconds
+17_p2.jpg - Preprocessing: 142.614370 seconds
+17_p2.jpg - Boundary Detection: 677.283067 seconds
+17_p2.jpg - Piece Classification: 7.412578 seconds
+17_p2.jpg - Visualization: 33.513389 seconds
+17_p2.jpg: 860.824082 seconds
+19_p2.jpg - Preprocessing: 143.366358 seconds
+19_p2.jpg - Boundary Detection: 672.784381 seconds
+19_p2.jpg - Piece Classification: 7.230690 seconds
