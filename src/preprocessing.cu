@@ -23,6 +23,7 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include <mutex>
 
 // ── Tunable parameters ─────────────────────────────────────────────────────────
 static constexpr int BLOCK_X = 32;
@@ -426,7 +427,7 @@ static void nvjpeg_decode(const std::vector<uint8_t>& jpeg, pipeline_t& pipe, in
 
     DETAILED_TIMER_START(nvjpegdecode);
     //CUDA_CHECK((cudaError_t)nvjpegDecode(handle, state, jpeg.data(), jpeg.size(), NVJPEG_OUTPUT_RGBI, &img, 0));
-    nvjpegDecode(dec.handle, dec.state, jpeg.data(), jpeg.size(), NVJPEG_OUTPUT_RGBI, &img, stream);
+    nvjpegStatus_t decode_status = nvjpegDecode(dec.handle, dec.state, jpeg.data(), jpeg.size(), NVJPEG_OUTPUT_RGBI, &img, stream);
 
     if (decode_status != NVJPEG_STATUS_SUCCESS)
     {

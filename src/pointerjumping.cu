@@ -682,7 +682,7 @@ ptr_jmp_out_t pointer_jumping(uint32_t *global_labels, uint32_t image_width, uin
     out.successors = ws.d_ptr_successors.data();
 
     // Reset ranks to 0
-    cudaMemset(out.ranks, 0, bytes, stream);
+    cudaMemsetAsync(out.ranks, 0, bytes, stream);
 
     // Step 1: Extract boundaries and identify immediate successors (neighbors)
     DETAILED_TIMER_START(init_list);
