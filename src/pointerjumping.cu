@@ -632,13 +632,14 @@ ptr_jmp_out_t pointer_jumping_old(uint32_t *global_labels, uint32_t image_width,
     uint32_t rounds = 32 - __builtin_clz(pixel_count);
     for (uint32_t r = 0; r < rounds; ++r) {
         uint32_t h_done = 1;
-        cudaMemcpy(d_done, &h_done, sizeof(uint32_t), cudaMemcpyHostToDevice);
+        cudaMemcpyAsync(d_done, &h_done, sizeof(uint32_t), cudaMemcpyHostToDevice, stream);
 
         list_rank_step_packed<<<blocks_1d, threads_1d>>>(
             out.boundaries, d_work_a, d_work_b, pixel_count, d_done
         );
 
-        cudaMemcpy(&h_done, d_done, sizeof(uint32_t), cudaMemcpyDeviceToHost);
+        cudaMemcpyAsync(&h_done, d_done, sizeof(uint32_t), cudaMemcpyDeviceToHost, stream);
+        CUDA_CHECK(cudaStreamSynchronize(stream));
         std::swap(d_work_a, d_work_b);
         if (h_done == 1) break;
     }
