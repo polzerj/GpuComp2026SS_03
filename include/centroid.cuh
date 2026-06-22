@@ -13,5 +13,3 @@ struct Centroid {
     float y;
     uint32_t label;
 };
-
-thrust::device_vector<Centroid> compute_centroids(const uint32_t *d_labels_in, uint32_t width, uint32_t height, pipeline_workspace_t& ws);

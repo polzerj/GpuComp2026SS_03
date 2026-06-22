@@ -37,6 +37,7 @@ static void draw_rect_outline(
         set_rgb_pixel(img, max_x, y, r, g, b);
     }
 }
+
 static void draw_square(
     rgb_image_t& img,
     int cx,
@@ -88,7 +89,7 @@ __global__ void set_background(const uint8_t* base_image_data, uint8_t* image_ou
     image_out[idx * 3 + 0] = v;
     image_out[idx * 3 + 1] = v;
     image_out[idx * 3 + 2] = v;
-    
+
 }
 
 static void draw_char(rgb_image_t& img, int x, int y, char c, int scale, uint8_t r, uint8_t g, uint8_t b) {
@@ -140,23 +141,23 @@ void visualizer(
     uint32_t height = original_image.height;
     uint32_t pixel_count= original_image.width * original_image.height;
 
-    
+
     std::unordered_map<uint32_t, const PieceCorners*> corner_lookup;
     for (const auto& c : corners) {
         corner_lookup[c.label] = &c;
     }
 
-    
+
     // //dark grayscale background --- in a kernel
     // uint32_t threads = 256;
     // uint32_t blocks = (pixel_count + threads - 1) / threads;
 
-    // uint8_t* image_background_d; 
+    // uint8_t* image_background_d;
     // cudaMalloc(&image_background_d, 3 * pixel_count * sizeof(uint8_t));
     // set_background<<<blocks,threads>>>(image_in_d, image_background_d, pixel_count);
     // cudaMemcpy(out.data.data(),image_background_d, 3 * pixel_count * sizeof(uint8_t), cudaMemcpyDeviceToHost);
 
-    
+
     for (const auto& piece : classified) {
         if (!piece.valid || piece.edges.size() != 4) {
             continue;
@@ -209,18 +210,18 @@ void visualizer(
 
         // Draw the bounding box (e.g., White or Gray)
         // We add a small 2-pixel padding so it doesn't overlap the contour exactly
-        draw_rect_outline(original_image, 
-            (int)min_x - 2, (int)min_y - 2, 
-            (int)max_x + 2, (int)max_y + 2, 
-            0, 255, 0); 
+        draw_rect_outline(original_image,
+            (int)min_x - 2, (int)min_y - 2,
+            (int)max_x + 2, (int)max_y + 2,
+            0, 255, 0);
 
         uint8_t last_corner_index= piece_corners->point_indices[3];
         uint8_t top_edge_index = 3;
 
-        //wenn der 1. corner in dem vektor die root ist und der x index vom 1. corner nicht größer als der vom letzten corner ist dann 
+        //wenn der 1. corner in dem vektor die root ist und der x index vom 1. corner nicht größer als der vom letzten corner ist dann
         if(points[first_corner_idx].rank == 0 && points[first_corner_idx].x < points[last_corner_index].x)
             top_edge_index = 0;
-            
+
         draw_edge_label_string(original_image, (int)min_x, (int)min_y - 10, piece.edges, top_edge_index);
 
         for (uint32_t edge = 0; edge < 4; ++edge) {

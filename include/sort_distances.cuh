@@ -14,11 +14,28 @@ struct ContourSignalPoint {
     uint32_t rank;
 };
 
-thrust::device_vector<ContourSignalPoint> sort_distances(
+// struct ContourSignalPointExt : ContourSignalPoint {
+//     float piece_length;
+// };
+
+struct ContourSignalBuildResult {
+    thrust::device_vector<Centroid> centroids;
+    thrust::device_vector<ContourSignalPoint> points;
+};
+
+/// @brief Optimized function to build a sorted contour signal from the boundary and Centroid data.
+/// @param d_boundaries A device pointer to the boundary image (uint32_t per pixel).
+/// @param d_ranks A device pointer to the rank image (uint32_t per pixel).
+/// @param width The width of the image.
+/// @param height The height of the image.
+/// @param ws The pipeline workspace.
+/// @param stream The CUDA stream.
+/// @return The result containing the sorted contour signal.
+ContourSignalBuildResult build_sorted_contour_signal(
     const uint32_t* d_boundaries,
     const uint32_t* d_ranks,
-    const thrust::device_vector<Centroid>& d_centroids,
     uint32_t width,
     uint32_t height,
-    pipeline_workspace_t& ws
+    pipeline_workspace_t& ws,
+    cudaStream_t stream = 0
 );

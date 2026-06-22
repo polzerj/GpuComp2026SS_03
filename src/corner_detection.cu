@@ -175,6 +175,8 @@ thrust::host_vector<PieceCorners> detect_corners(
     uint32_t distance_threshold,
     pipeline_workspace_t& ws)
 {
+    cudaStream_t stream = ws.stream;
+
     uint32_t num_points = static_cast<uint32_t>(h_smoothed.size());
 
     if (num_points == 0)
@@ -207,7 +209,7 @@ thrust::host_vector<PieceCorners> detect_corners(
     // thrust::host_vector<uint8_t> h_corners_bool = d_corners;
     // thrust::host_vector<float> h_scores = d_scores;
 
-    find_corners<<<blocks, threads>>>(
+    find_corners<<<blocks, threads, 0, stream>>>(
         thrust::raw_pointer_cast(d_smoothed.data()),
         d_corners,
         d_scores,
@@ -216,24 +218,26 @@ thrust::host_vector<PieceCorners> detect_corners(
         num_points
     );
 
-    cudaDeviceSynchronize();
-
     thrust::host_vector<uint8_t> h_corners_bool(num_points);
     thrust::host_vector<float> h_scores(num_points);
 
-    cudaMemcpy(
+    cudaMemcpyAsync(
         h_corners_bool.data(),
         d_corners,
         static_cast<size_t>(num_points) * sizeof(uint8_t),
-        cudaMemcpyDeviceToHost
+        cudaMemcpyDeviceToHost,
+        stream
     );
 
-    cudaMemcpy(
+    cudaMemcpyAsync(
         h_scores.data(),
         d_scores,
         static_cast<size_t>(num_points) * sizeof(float),
-        cudaMemcpyDeviceToHost
+        cudaMemcpyDeviceToHost,
+        stream
     );
+
+    CUDA_CHECK(cudaStreamSynchronize(stream));
 
     DETAILED_TIMER_STOP(corner_detection, "Corner Detection");
 

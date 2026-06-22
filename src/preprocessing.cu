@@ -7,12 +7,12 @@
 #include <thrust/transform.h>
 #include <thrust/scan.h>
 #include <thrust/count.h>
+#include <thrust/system/cuda/execution_policy.h>
 
 #include "types.hpp"
 #include "timer.hpp"
 #include "pipeline_workspace.hpp"
 
-#include "stb_image.h"
 #include "preprocessing.cuh"
 
 #include <cuda_runtime.h>
@@ -22,6 +22,7 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include <mutex>
 
 // ── Tunable parameters ─────────────────────────────────────────────────────────
 static constexpr int BLOCK_X = 32;
@@ -180,7 +181,7 @@ __global__ void gaussian_fused(const T *__restrict__ src,
     #pragma unroll
     for (int k = 0; k <= 2 * RADIUS; ++k)
         sum += c_gaussian[k] * smem_hc[threadIdx.y + k][threadIdx.x];
-    dst[y * W + x] = (uint8_t)(sum + 0.5f);  
+    dst[y * W + x] = (uint8_t)(sum + 0.5f);
 }
 
 // ─── Histogram for Otsu ───────
@@ -283,10 +284,10 @@ __global__ void otsu_kernel(const int *__restrict__ hist, int N, float *out)
 // Processes 4 pixels per thread via float4 load + packed uint32 write.
 
 __global__ void apply_threshold_kernel(const uint8_t *__restrict__ luma,
-                                       uint8_t       *__restrict__ binary,
-                                       int W, int H, float threshold)
+                                       uint8_t *__restrict__ binary,
+                                       int W, int H, const float *threshold)
 {
-    const uint8_t thresh = (uint8_t)threshold;
+    const uint8_t thresh = (uint8_t)*threshold;
 
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     int y   = blockIdx.y * blockDim.y + threadIdx.y;
@@ -302,33 +303,6 @@ __global__ void apply_threshold_kernel(const uint8_t *__restrict__ luma,
 
     reinterpret_cast<uchar4 *>(binary)[y * (W / 4) + idx] = result;
 }
-
-// ── Debug saves ────────────────────────────────────────────────────────────────
-// Compiled in only when -DPREPROC_DEBUG is passed.  Each helper downloads one
-// device buffer, converts it if needed, and writes a PNG to ../data/processed/.
-/*
-#ifdef PREPROC_DEBUG
-static void save_float_stage(const float *d_buf, int W, int H, const char *path)
-{
-    std::vector<float>   h_f(W * H);
-    std::vector<uint8_t> h_u8(W * H);
-    cudaMemcpy(h_f.data(), d_buf, (size_t)W * H * sizeof(float), cudaMemcpyDeviceToHost);
-    for (int i = 0; i < W * H; ++i)
-        h_u8[i] = (uint8_t)fminf(255.0f, fmaxf(0.0f, h_f[i]));
-    stbi_write_png(path, W, H, 1, h_u8.data(), W);
-}
-
-static void save_uint8_stage(const uint8_t *d_buf, int W, int H, const char *path)
-{
-    std::vector<uint8_t> h_buf(W * H);
-    cudaMemcpy(h_buf.data(), d_buf, (size_t)W * H, cudaMemcpyDeviceToHost);
-    stbi_write_png(path, W, H, 1, h_buf.data(), W);
-}
-#endif  // PREPROC_DEBUG
-*/
-
-// AI Generated image loading instead of stb
-//  seems faster
 
 // Reads a JPEG file into a host byte buffer.
 static std::vector<uint8_t> read_file(const std::string &path)
@@ -399,7 +373,7 @@ void destroy_jpeg_decoder(jpeg_decoder_t& dec)
 
 // Decodes a JPEG directly to device memory (d_rgb) using nvJPEG.
 // Returns image dimensions via W, H.
-static void nvjpeg_decode(const std::vector<uint8_t>& jpeg, pipeline_t& pipe, int& W, int& H, pipeline_workspace_t& ws, jpeg_decoder_t& dec)
+static void nvjpeg_decode(const std::vector<uint8_t>& jpeg, pipeline_t& pipe, int& W, int& H, pipeline_workspace_t& ws, jpeg_decoder_t& dec, cudaStream_t stream)
 {
     // nvjpegHandle_t handle;
     // nvjpegJpegState_t state;
@@ -425,54 +399,52 @@ static void nvjpeg_decode(const std::vector<uint8_t>& jpeg, pipeline_t& pipe, in
 
     DETAILED_TIMER_START(nvjpegdecode);
     //CUDA_CHECK((cudaError_t)nvjpegDecode(handle, state, jpeg.data(), jpeg.size(), NVJPEG_OUTPUT_RGBI, &img, 0));
-    nvjpegDecode( dec.handle, dec.state, jpeg.data(), jpeg.size(), NVJPEG_OUTPUT_RGBI, &img, 0);
-    CUDA_CHECK(cudaDeviceSynchronize());
+    nvjpegStatus_t decode_status = nvjpegDecode(dec.handle, dec.state, jpeg.data(), jpeg.size(), NVJPEG_OUTPUT_RGBI, &img, stream);
+
+    if (decode_status != NVJPEG_STATUS_SUCCESS)
+    {
+        throw std::runtime_error("nvjpegDecode failed with status " + std::to_string(static_cast<int>(decode_status)));
+    }
+
     DETAILED_TIMER_STOP(nvjpegdecode, "nvJPEG decode");
 
     // nvjpegJpegStateDestroy(state);
     // nvjpegDestroy(handle);
 }
 
-static void jpeg_load(const std::vector<uint8_t> &jpeg, pipeline_t &pipe, int &W, int &H)
-{
-    int n;
-    unsigned char *data = stbi_load_from_memory(jpeg.data(), jpeg.size(), &W, &H, &n, 3);
-    if (!data)
-        throw std::runtime_error("Failed to decode image with stb_image");
-
-    pipe = alloc_pipeline(W, H);
-    CUDA_CHECK(cudaMemcpy(pipe.d_rgb, data, (size_t)W * H * 3, cudaMemcpyHostToDevice));
-    stbi_image_free(data);
-}
-
 // MEMCPY
-static void download_result(const pipeline_t &p, grayscale_image_t &out)
+static void download_result(const pipeline_t &p, grayscale_image_t &out, cudaStream_t stream)
 {
     size_t N = (size_t)p.width * p.height;
     out.width = p.width;
     out.height = p.height;
     out.data.resize(N);
-    CUDA_CHECK(cudaMemcpy(out.data.data(), p.d_binary, N, cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpyAsync(out.data.data(), p.d_binary, N, cudaMemcpyDeviceToHost, stream));
+    CUDA_CHECK(cudaStreamSynchronize(stream));
 }
 
-static void download_rgb_result(const pipeline_t &p, rgb_image_t &out)
+static void download_rgb_result(const pipeline_t &p, rgb_image_t &out, cudaStream_t stream)
 {
     size_t N = (size_t)p.width * p.height;
     out.width = p.width;
     out.height = p.height;
     out.data.resize(N * 3);
-    CUDA_CHECK(cudaMemcpy(out.data.data(), p.d_rgb, N * 3, cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpyAsync(out.data.data(), p.d_rgb, N * 3, cudaMemcpyDeviceToHost, stream));
+    CUDA_CHECK(cudaStreamSynchronize(stream));
 }
 
 rgb_image_d_t preprocessing(const std::string &imagePath, uint8_t *&d_result,  pipeline_workspace_t& ws, jpeg_decoder_t& jpeg_decoder)
 {
     DETAILED_TIMER_START(imageread);
+    cudaStream_t stream = ws.stream;
+    auto policy = thrust::cuda::par.on(stream);
+
     int W, H;
     auto jpeg = read_file(imagePath);
     pipeline_t pipe{};
-    nvjpeg_decode(jpeg, pipe, W, H, ws, jpeg_decoder);
+    nvjpeg_decode(jpeg, pipe, W, H, ws, jpeg_decoder, stream);
     DETAILED_TIMER_STOP(imageread, "image read + decode");
-    printf("[image] %s - %d x %d\n", imagePath.c_str(), W, H);
+    // printf("[image] %s - %d x %d\n", imagePath.c_str(), W, H);
 
     dim3 block(BLOCK_X, BLOCK_Y);
     dim3 grid((W + block.x - 1) / block.x, (H + block.y - 1) / block.y);
@@ -482,7 +454,7 @@ rgb_image_d_t preprocessing(const std::string &imagePath, uint8_t *&d_result,  p
     DETAILED_TIMER_START(luma);
     dim3 luma_block(256);
     dim3 luma_grid((W * H + 255) / 256);
-    rgba_to_luma_kernel<<<luma_grid, luma_block>>>(pipe.d_rgb, pipe.d_gray, W*H);
+    rgba_to_luma_kernel<<<luma_grid, luma_block, 0, stream>>>(pipe.d_rgb, pipe.d_gray, W*H);
     DETAILED_TIMER_STOP(luma, "rgba_to_luma");
 
     DETAILED_TIMER_START(download_rgb);
@@ -498,8 +470,9 @@ rgb_image_d_t preprocessing(const std::string &imagePath, uint8_t *&d_result,  p
     //cudaFree(pipe.d_rgb);
     //pipe.d_rgb = nullptr;
 
-    // Gaussian blur
-    build_gaussian_kernel(GAUSSIAN_SIGMA);
+    // Gaussian blur, constant memory is shared by all streams, so initialize it once.
+    static std::once_flag gaussian_once;
+    std::call_once(gaussian_once, []() { build_gaussian_kernel(GAUSSIAN_SIGMA); });
 
     //const int rows_gauss = block.y + 2 * radius;
     //size_t smem_gauss = (size_t)rows_gauss * (block.x + 2 * radius + block.x) * sizeof(float);
@@ -508,8 +481,8 @@ rgb_image_d_t preprocessing(const std::string &imagePath, uint8_t *&d_result,  p
     // float* d_blur = nullptr;
     //cudaMalloc(&d_blur, sizeof(float) * W * H);
     uint8_t* d_blur = ws.d_blur.data();
-    
-    gaussian_fused<uint8_t, RADIUS><<<grid, block>>>(pipe.d_gray, d_blur, W, H);
+
+    gaussian_fused<uint8_t, RADIUS><<<grid, block, 0, stream>>>(pipe.d_gray, d_blur, W, H);
     //std::swap(pipe.d_gray, d_blur);
     //cudaFree(d_blur);
     pipe.d_gray = d_blur;
@@ -522,44 +495,45 @@ rgb_image_d_t preprocessing(const std::string &imagePath, uint8_t *&d_result,  p
     // // Allocate
     // CUDA_CHECK(cudaMalloc(&d_hist, HIST_BINS * sizeof(int)));
     // CUDA_CHECK(cudaMalloc(&d_threshold, sizeof(float)));
-    // CUDA_CHECK(cudaMemset(d_hist, 0, HIST_BINS * sizeof(int)));
+    // CUDA_CHECK(cudaMemsetAsync(d_hist, 0, HIST_BINS * sizeof(int), stream));
 
     int* d_hist = ws.d_hist.data();
     float* d_threshold = ws.d_threshold.data();
 
-    CUDA_CHECK(cudaMemset(d_hist, 0, HIST_BINS * sizeof(int)));
+    CUDA_CHECK(cudaMemsetAsync(d_hist, 0, HIST_BINS * sizeof(int), stream));
     DETAILED_TIMER_START(hist);
     const size_t smem_hist = (HIST_BLOCK / 32) * HIST_BINS * sizeof(int);
-histogram_kernel<<<(num_pixels / 4 + HIST_BLOCK - 1) / HIST_BLOCK, HIST_BLOCK, smem_hist>>>(pipe.d_gray, d_hist, num_pixels);
+    histogram_kernel<<<(num_pixels / 4 + HIST_BLOCK - 1) / HIST_BLOCK, HIST_BLOCK, smem_hist, stream>>>(pipe.d_gray, d_hist, num_pixels);
     DETAILED_TIMER_STOP(hist, "histogram");
 
     DETAILED_TIMER_START(otsu);
-    otsu_kernel<<<1, HIST_BINS>>>(d_hist, num_pixels, d_threshold);
+    otsu_kernel<<<1, HIST_BINS, 0, stream>>>(d_hist, num_pixels, d_threshold);
     DETAILED_TIMER_STOP(otsu, "otsu_gpu");
     //cudaFree(d_hist);
 
-    float h_threshold;
-    CUDA_CHECK(cudaMemcpy(&h_threshold, d_threshold, sizeof(float), cudaMemcpyDeviceToHost));
-    //cudaFree(d_threshold);
 
 #ifdef PREPROC_TIMING
+    float h_threshold;
+    CUDA_CHECK(cudaMemcpyAsync(&h_threshold, d_threshold, sizeof(float), cudaMemcpyDeviceToHost, stream));
+    CUDA_CHECK(cudaStreamSynchronize(stream));
+
     printf("[preprocessing] Otsu threshold = %.1f\n", h_threshold);
 #endif
 
     dim3 thresh_grid((W / 4 + block.x - 1) / block.x, grid.y);
     DETAILED_TIMER_START(thresh);
-    apply_threshold_kernel<<<thresh_grid, block>>>(pipe.d_gray, pipe.d_binary, W, H, h_threshold);
+    apply_threshold_kernel<<<thresh_grid, block,0,stream>>>(pipe.d_gray, pipe.d_binary, W, H, d_threshold);
     DETAILED_TIMER_STOP(thresh, "apply_threshold");
 
     DETAILED_TIMER_START(invert);
     // count white pixels in binary result
     thrust::device_ptr<uint8_t> d_binary_ptr(pipe.d_binary);
-    size_t white_pixels = thrust::count(d_binary_ptr, d_binary_ptr + num_pixels, 255);
+    size_t white_pixels = thrust::count(policy, d_binary_ptr, d_binary_ptr + num_pixels, 255);
     if (white_pixels > (num_pixels - white_pixels))
     {
         // Invert binary if foreground is majority
         printf("[preprocessing] Inverting binary result (foreground is majority: %zu white pixels to %zu black pixels)\n", white_pixels, num_pixels - white_pixels);
-        thrust::transform(d_binary_ptr, d_binary_ptr + num_pixels, d_binary_ptr, [] __device__(uint8_t v)
+        thrust::transform(policy, d_binary_ptr, d_binary_ptr + num_pixels, d_binary_ptr, [] __device__(uint8_t v)
                           { return 255 - v; });
     }
     DETAILED_TIMER_STOP(invert, "invert binary if needed");
