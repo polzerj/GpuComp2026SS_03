@@ -1,25 +1,19 @@
-
 #include <thrust/host_vector.h>
 #include <thrust/device_vector.h>
 #include <thrust/copy.h>
 #include <thrust/reduce.h>
-#include <thrust/count.h>
-#include <thrust/sequence.h>
+#include <thrust/sort.h>
 #include <thrust/functional.h>
 #include <thrust/device_ptr.h>
+#include <thrust/iterator/counting_iterator.h>
+#include <thrust/iterator/zip_iterator.h>
+#include <thrust/tuple.h>
 #include <thrust/system/cuda/execution_policy.h>
+
 #include "centroid.cuh"
 #include "timer.hpp"
 
 #define THRESHOLD 200
-
-struct is_positive
-{
-    __device__ bool operator()(const uint32_t c) const
-    {
-        return c > 0;
-    }
-};
 
 struct count_at_least {
     uint32_t threshold;
@@ -30,169 +24,304 @@ struct count_at_least {
     }
 };
 
-__global__ void compute_sums_kernel(
-    const uint32_t *image,
-    uint32_t width,
-    uint32_t height,
-    unsigned long long *sum_x,
-    unsigned long long *sum_y,
-    uint32_t *count)
-{
-    uint32_t x = blockIdx.x * blockDim.x + threadIdx.x;
-    uint32_t y = blockIdx.y * blockDim.y + threadIdx.y;
+struct IsBoundaryPixelId {
+    const uint32_t* labels;
 
-    if (x >= width || y >= height)
-        return;
-
-    uint32_t idx = y * width + x;
-    uint32_t label = image[idx];
-
-    if (label > 0)
-    {
-        atomicAdd(&sum_x[label], (unsigned long long)x);
-        atomicAdd(&sum_y[label], (unsigned long long)y);
-        atomicAdd(&count[label], 1);
+    __host__ __device__
+    bool operator()(uint32_t pixel_id) const {
+        return labels[pixel_id] != 0u;
     }
+};
+
+__global__ void init_boundary_accumulators_kernel(
+    const uint32_t* boundary_ids,
+    const uint32_t* labels_in,
+    uint32_t* labels_out,
+    unsigned long long* sum_x,
+    unsigned long long* sum_y,
+    uint32_t* count,
+    uint32_t width,
+    uint32_t num_boundary)
+{
+    uint32_t i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= num_boundary) {
+        return;
+    }
+
+    uint32_t pixel_id = boundary_ids[i];
+    labels_out[i] = labels_in[pixel_id];
+    sum_x[i] = static_cast<unsigned long long>(pixel_id % width);
+    sum_y[i] = static_cast<unsigned long long>(pixel_id / width);
+    count[i] = 1u;
 }
 
-__global__ void compactCentroidsKernel(
-    const unsigned long long *sum_x,
-    const unsigned long long *sum_y,
-    const uint32_t *count,
-    const uint32_t *valid_labels,
-    Centroid *centroids,
+struct accum_tuple_sum {
+    template <typename TupleA, typename TupleB>
+    __host__ __device__
+    thrust::tuple<unsigned long long, unsigned long long, uint32_t>
+    operator()(const TupleA& a, const TupleB& b) const {
+        return thrust::make_tuple(
+            static_cast<unsigned long long>(thrust::get<0>(a)) +
+                static_cast<unsigned long long>(thrust::get<0>(b)),
+            static_cast<unsigned long long>(thrust::get<1>(a)) +
+                static_cast<unsigned long long>(thrust::get<1>(b)),
+            static_cast<uint32_t>(thrust::get<2>(a)) +
+                static_cast<uint32_t>(thrust::get<2>(b))
+        );
+    }
+};
+
+__global__ void compact_reduced_centroids_kernel(
+    const uint32_t* reduced_labels,
+    const unsigned long long* reduced_sum_x,
+    const unsigned long long* reduced_sum_y,
+    const uint32_t* reduced_count,
+    const uint32_t* valid_component_indices,
+    Centroid* centroids,
     uint32_t num_valid)
 {
-    uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx >= num_valid)
+    uint32_t i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= num_valid) {
         return;
+    }
 
-    uint32_t label = valid_labels[idx];
-    uint32_t count_label = count[label];
-    centroids[idx].x = (count_label >= THRESHOLD) ? sum_x[label] * 1.0 / count_label : -1.0f;
-    centroids[idx].y = (count_label >= THRESHOLD) ? sum_y[label] * 1.0 / count_label : -1.0f;
-    centroids[idx].label = label;
+    uint32_t component_index = valid_component_indices[i];
+    uint32_t c = reduced_count[component_index];
+
+    Centroid out;
+    out.label = reduced_labels[component_index];
+    out.x = static_cast<float>(
+        static_cast<double>(reduced_sum_x[component_index]) /
+        static_cast<double>(c)
+    );
+    out.y = static_cast<float>(
+        static_cast<double>(reduced_sum_y[component_index]) /
+        static_cast<double>(c)
+    );
+
+    centroids[i] = out;
 }
 
-thrust::device_vector<Centroid> compute_centroids(const uint32_t *d_labels_in, uint32_t width, uint32_t height, pipeline_workspace_t& ws, cudaStream_t stream)
+thrust::device_vector<Centroid> compute_centroids(
+    const uint32_t* d_labels_in,
+    uint32_t width,
+    uint32_t height,
+    pipeline_workspace_t& ws,
+    cudaStream_t stream)
 {
-    auto num_pixels = width * height;
+    const uint32_t num_pixels = width * height;
     auto policy = thrust::cuda::par.on(stream);
 
-    // thrust::device_vector<uint32_t> d_labels(h_labels, h_labels + num_pixels);
-    thrust::device_ptr<const uint32_t> d_labels = thrust::device_pointer_cast(d_labels_in);
-
-    DETAILED_TIMER_START(find_max_label);
-    uint32_t max_label = thrust::reduce(policy, d_labels, d_labels + num_pixels, 0u, thrust::maximum<uint32_t>());
-    DETAILED_TIMER_STOP(find_max_label, "Find max label");
-
-    if (max_label == 0)
-    {
+    if (num_pixels == 0) {
         return thrust::device_vector<Centroid>();
     }
 
-    DETAILED_TIMER_START(compute_sums);
-    // thrust::device_vector<unsigned long long> d_sum_x(max_label + 1, 0ull);
-    // thrust::device_vector<unsigned long long> d_sum_y(max_label + 1, 0ull);
-    // thrust::device_vector<uint32_t> d_count(max_label + 1, 0u);
-    uint32_t label_capacity = max_label + 1;
+    // ---------------------------------------------------------------------
+    // Compact only the actually-used boundary pixels.
+    //
+    // The old implementation allocated arrays indexed by sparse pixel-id
+    // labels and then memset/scanned almost the whole image-sized label range.
+    // For 5100x7016 images that is tens of millions of entries per stream.
+    // This version pays one full scan to compact boundary pixel IDs, then all
+    // centroid work scales with num_boundary instead of width*height.
+    // ---------------------------------------------------------------------
+    DETAILED_TIMER_START_STREAM(compact_centroid_boundaries, stream);
 
-    ws.d_centroid_sum_x.ensure(label_capacity);
-    ws.d_centroid_sum_y.ensure(label_capacity);
-    ws.d_centroid_count.ensure(label_capacity);
-    ws.d_centroid_indices.ensure(label_capacity);
-    ws.d_centroid_valid_labels.ensure(label_capacity);
+    ws.d_sort_boundary_ids.ensure(num_pixels);
+    uint32_t* d_boundary_ids = ws.d_sort_boundary_ids.data();
+    thrust::device_ptr<uint32_t> boundary_ids_begin =
+        thrust::device_pointer_cast(d_boundary_ids);
 
+    auto ids_begin = thrust::make_counting_iterator<uint32_t>(0);
+    auto ids_end = ids_begin + num_pixels;
+
+    auto boundary_end = thrust::copy_if(
+        policy,
+        ids_begin,
+        ids_end,
+        boundary_ids_begin,
+        IsBoundaryPixelId{d_labels_in}
+    );
+
+    const uint32_t num_boundary =
+        static_cast<uint32_t>(boundary_end - boundary_ids_begin);
+
+    DETAILED_TIMER_STOP(
+        compact_centroid_boundaries,
+        "Compact centroid boundary pixels"
+    );
+
+    if (num_boundary == 0) {
+        return thrust::device_vector<Centroid>();
+    }
+
+    // ---------------------------------------------------------------------
+    // Build one accumulator tuple per boundary pixel:
+    // key   = label
+    // value = (x, y, 1)
+    // ---------------------------------------------------------------------
+    DETAILED_TIMER_START_STREAM(init_centroid_accumulators, stream);
+
+    ws.d_centroid_labels.ensure(num_boundary);
+    ws.d_centroid_sum_x.ensure(num_boundary);
+    ws.d_centroid_sum_y.ensure(num_boundary);
+    ws.d_centroid_count.ensure(num_boundary);
+
+    uint32_t* d_labels = ws.d_centroid_labels.data();
     unsigned long long* d_sum_x = ws.d_centroid_sum_x.data();
     unsigned long long* d_sum_y = ws.d_centroid_sum_y.data();
     uint32_t* d_count = ws.d_centroid_count.data();
-    uint32_t* d_indices = ws.d_centroid_indices.data();
-    uint32_t* d_valid_labels = ws.d_centroid_valid_labels.data();
 
-    CUDA_CHECK(cudaMemsetAsync(d_sum_x, 0, label_capacity * sizeof(unsigned long long), stream));
-    CUDA_CHECK(cudaMemsetAsync(d_sum_y, 0, label_capacity * sizeof(unsigned long long), stream));
-    CUDA_CHECK(cudaMemsetAsync(d_count, 0, label_capacity * sizeof(uint32_t), stream));
+    uint32_t threads = 256;
+    uint32_t blocks = (num_boundary + threads - 1) / threads;
 
-    dim3 block(16, 16);
-    dim3 grid((width + block.x - 1) / block.x, (height + block.y - 1) / block.y);
-
-    compute_sums_kernel<<<grid, block, 0, stream>>>(
+    init_boundary_accumulators_kernel<<<blocks, threads, 0, stream>>>(
+        d_boundary_ids,
         d_labels_in,
-        width,
-        height,
-        d_sum_x,
-        d_sum_y,
-        d_count
-    );
-
-    DETAILED_TIMER_STOP(compute_sums, "Compute sums and counts");
-
-    DETAILED_TIMER_START(count_valid);
-    // thrust::device_vector<uint32_t> indices(max_label + 1);
-    // thrust::sequence(indices.begin(), indices.end());
-
-    // // Count directly without needing a mask vector
-    // //uint32_t num_valid = thrust::count_if(d_count.begin(), d_count.end(), is_positive());
-    // uint32_t num_valid = thrust::count_if(d_count.begin(), d_count.end(), count_at_least{THRESHOLD});
-    thrust::device_ptr<uint32_t> count_begin = thrust::device_pointer_cast(d_count);
-
-    thrust::device_ptr<uint32_t> indices_begin = thrust::device_pointer_cast(d_indices);
-
-    thrust::device_ptr<uint32_t> valid_labels_begin = thrust::device_pointer_cast(d_valid_labels);
-
-    thrust::sequence(policy, indices_begin, indices_begin + label_capacity);
-
-    uint32_t num_valid = thrust::count_if(
-        policy,
-        count_begin,
-        count_begin + label_capacity,
-        count_at_least{THRESHOLD}
-    );
-    DETAILED_TIMER_STOP(count_valid, "Count valid labels");
-
-    if (num_valid == 0)
-    {
-        return thrust::device_vector<Centroid>();
-    }
-
-    DETAILED_TIMER_START(copy_valid_labels);
-    // thrust::device_vector<uint32_t> d_valid_labels(num_valid);
-
-    // // copy_if can use d_count as the stencil directly
-    // //thrust::copy_if(indices.begin(), indices.end(), d_count.begin(), d_valid_labels.begin(), is_positive());
-    // thrust::copy_if(indices.begin(), indices.end(), d_count.begin(), d_valid_labels.begin(), count_at_least{THRESHOLD});
-    thrust::copy_if(
-        policy,
-        indices_begin,
-        indices_begin + label_capacity,
-        count_begin,
-        valid_labels_begin,
-        count_at_least{THRESHOLD}
-    );
-    DETAILED_TIMER_STOP(copy_valid_labels, "Copy valid labels");
-
-    DETAILED_TIMER_START(compact_centroids);
-    thrust::device_vector<Centroid> d_centroids(num_valid);
-    dim3 block2(256);
-    dim3 grid2((num_valid + block2.x - 1) / block2.x);
-
-    compactCentroidsKernel<<<grid2, block2, 0, stream>>>(
+        d_labels,
         d_sum_x,
         d_sum_y,
         d_count,
-        d_valid_labels,
+        width,
+        num_boundary
+    );
+
+    DETAILED_TIMER_STOP(init_centroid_accumulators, "Init centroid accumulators");
+
+    // ---------------------------------------------------------------------
+    // Sort by label and reduce equal labels. This avoids atomicAdd hot-spots
+    // and avoids huge sparse sum/count arrays indexed by pixel-id labels.
+    // ---------------------------------------------------------------------
+    DETAILED_TIMER_START_STREAM(sort_centroid_labels, stream);
+
+    thrust::device_ptr<uint32_t> labels_begin =
+        thrust::device_pointer_cast(d_labels);
+    thrust::device_ptr<unsigned long long> sum_x_begin =
+        thrust::device_pointer_cast(d_sum_x);
+    thrust::device_ptr<unsigned long long> sum_y_begin =
+        thrust::device_pointer_cast(d_sum_y);
+    thrust::device_ptr<uint32_t> count_begin =
+        thrust::device_pointer_cast(d_count);
+
+    auto values_begin = thrust::make_zip_iterator(
+        thrust::make_tuple(sum_x_begin, sum_y_begin, count_begin)
+    );
+
+    thrust::sort_by_key(
+        policy,
+        labels_begin,
+        labels_begin + num_boundary,
+        values_begin
+    );
+
+    DETAILED_TIMER_STOP(sort_centroid_labels, "Sort centroid labels");
+
+    DETAILED_TIMER_START_STREAM(reduce_centroid_labels, stream);
+
+    ws.d_centroid_reduced_labels.ensure(num_boundary);
+    ws.d_centroid_reduced_sum_x.ensure(num_boundary);
+    ws.d_centroid_reduced_sum_y.ensure(num_boundary);
+    ws.d_centroid_reduced_count.ensure(num_boundary);
+
+    uint32_t* d_reduced_labels = ws.d_centroid_reduced_labels.data();
+    unsigned long long* d_reduced_sum_x = ws.d_centroid_reduced_sum_x.data();
+    unsigned long long* d_reduced_sum_y = ws.d_centroid_reduced_sum_y.data();
+    uint32_t* d_reduced_count = ws.d_centroid_reduced_count.data();
+
+    thrust::device_ptr<uint32_t> reduced_labels_begin =
+        thrust::device_pointer_cast(d_reduced_labels);
+    thrust::device_ptr<unsigned long long> reduced_sum_x_begin =
+        thrust::device_pointer_cast(d_reduced_sum_x);
+    thrust::device_ptr<unsigned long long> reduced_sum_y_begin =
+        thrust::device_pointer_cast(d_reduced_sum_y);
+    thrust::device_ptr<uint32_t> reduced_count_begin =
+        thrust::device_pointer_cast(d_reduced_count);
+
+    auto reduced_values_begin = thrust::make_zip_iterator(
+        thrust::make_tuple(
+            reduced_sum_x_begin,
+            reduced_sum_y_begin,
+            reduced_count_begin
+        )
+    );
+
+    auto reduced_end = thrust::reduce_by_key(
+        policy,
+        labels_begin,
+        labels_begin + num_boundary,
+        values_begin,
+        reduced_labels_begin,
+        reduced_values_begin,
+        thrust::equal_to<uint32_t>(),
+        accum_tuple_sum{}
+    );
+
+    const uint32_t num_components =
+        static_cast<uint32_t>(reduced_end.first - reduced_labels_begin);
+
+    DETAILED_TIMER_STOP(reduce_centroid_labels, "Reduce centroid labels");
+
+    if (num_components == 0) {
+        return thrust::device_vector<Centroid>();
+    }
+
+    // ---------------------------------------------------------------------
+    // Keep only real components and drop tiny noise blobs.
+    // valid_component_indices stores indices into the reduced arrays, not labels.
+    // ---------------------------------------------------------------------
+    DETAILED_TIMER_START_STREAM(filter_valid_centroids, stream);
+
+    ws.d_centroid_valid_labels.ensure(num_components);
+    uint32_t* d_valid_component_indices = ws.d_centroid_valid_labels.data();
+    thrust::device_ptr<uint32_t> valid_begin =
+        thrust::device_pointer_cast(d_valid_component_indices);
+
+    auto component_ids_begin = thrust::make_counting_iterator<uint32_t>(0);
+    auto component_ids_end = component_ids_begin + num_components;
+
+    auto valid_end = thrust::copy_if(
+        policy,
+        component_ids_begin,
+        component_ids_end,
+        reduced_count_begin,
+        valid_begin,
+        count_at_least{THRESHOLD}
+    );
+
+    const uint32_t num_valid =
+        static_cast<uint32_t>(valid_end - valid_begin);
+
+    DETAILED_TIMER_STOP(filter_valid_centroids, "Filter valid centroids");
+
+    if (num_valid == 0) {
+        return thrust::device_vector<Centroid>();
+    }
+
+    DETAILED_TIMER_START_STREAM(compact_centroids, stream);
+
+    thrust::device_vector<Centroid> d_centroids(num_valid);
+    uint32_t compact_blocks = (num_valid + threads - 1) / threads;
+
+    compact_reduced_centroids_kernel<<<compact_blocks, threads, 0, stream>>>(
+        d_reduced_labels,
+        d_reduced_sum_x,
+        d_reduced_sum_y,
+        d_reduced_count,
+        d_valid_component_indices,
         thrust::raw_pointer_cast(d_centroids.data()),
         num_valid
     );
-    DETAILED_TIMER_STOP(compact_centroids, "Compact centroids");
 
-    // thrust::host_vector<Centroid> h_centroids(num_valid);
-    // thrust::copy(d_centroids.begin(), d_centroids.end(), h_centroids.begin());
+    DETAILED_TIMER_STOP(compact_centroids, "Compact centroids");
 
     return d_centroids;
 }
 
-thrust::device_vector<Centroid> compute_centroids(const uint32_t *d_labels_in, uint32_t width, uint32_t height, pipeline_workspace_t& ws)
+thrust::device_vector<Centroid> compute_centroids(
+    const uint32_t* d_labels_in,
+    uint32_t width,
+    uint32_t height,
+    pipeline_workspace_t& ws)
 {
     return compute_centroids(d_labels_in, width, height, ws, 0);
 }
