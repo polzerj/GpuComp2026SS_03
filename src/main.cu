@@ -495,9 +495,13 @@ void process_image(const std::string &image_path, image_context_t &ctx)
 
     CPU_TIMER_START(visualization);
 
-    image_path.erase(image_path.find_last_of('.'));        // remove extension
-    image_path.erase(0, image_path.find_last_of('/') + 1); // remove directories
-    std::string output_path = "../data/processed/" + image_path + "_classified.jpg";
+    std::string image_name = image_path;
+    image_name.erase(image_name.find_last_of('.'));
+    image_name.erase(0, image_name.find_last_of('/') + 1);
+
+    std::string output_path =
+        "../data/processed/" + image_name + "_classified.jpg";
+
     visualizer_exp(
         &original_image_d,
         output_path,
@@ -507,8 +511,7 @@ void process_image(const std::string &image_path, image_context_t &ctx)
         h_corners,
         classified,
         ctx.vis_ws,
-        ctx.jpeg_encoder
-    );
+        ctx.jpeg_encoder);
     //cudaFree(original_image_d.data);
 
     CPU_TIMER_STOP(visualization, "Visualization and saving output image");
