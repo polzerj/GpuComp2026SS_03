@@ -49,17 +49,29 @@ struct pipeline_workspace_t {
     device_buffer_t<uint2> d_ptr_work_b;
 
     device_buffer_t<uint32_t> d_ptr_done;
+    //--
+    device_buffer_t<uint32_t> d_sort_boundary_ids;                // Compacted boundary pixel IDs
+    device_buffer_t<uint64_t> d_sort_keys;                        // Sort keys (label << 32 | rank)
+    device_buffer_t<float> d_sort_center_x;                       // (Legacy, can be removed later)
+    device_buffer_t<float> d_sort_center_y;                       // (Legacy, can be removed later)
+    device_buffer_t<uint32_t> d_centroid_reduced_labels;          // Reduced labels for centroids
+    device_buffer_t<unsigned long long> d_centroid_reduced_sum_x; // Sum of x-coordinates per label
+    device_buffer_t<unsigned long long> d_centroid_reduced_sum_y; // Sum of y-coordinates per label
+    device_buffer_t<uint32_t> d_centroid_reduced_count;           // Pixel count per label
+    device_buffer_t<uint32_t> d_centroid_valid_labels;            // Indices of valid (non-noise) components
 
-    device_buffer_t<unsigned long long> d_centroid_sum_x;
-    device_buffer_t<unsigned long long> d_centroid_sum_y;
-    device_buffer_t<uint32_t> d_centroid_count;
-    device_buffer_t<uint32_t> d_centroid_indices;
-    device_buffer_t<uint32_t> d_centroid_valid_labels;
+    //--
+    // device_buffer_t<unsigned long long> d_centroid_sum_x;
+    // device_buffer_t<unsigned long long> d_centroid_sum_y;
+    // device_buffer_t<uint32_t> d_centroid_count;
+    // device_buffer_t<uint32_t> d_centroid_indices;
+    // device_buffer_t<uint32_t> d_centroid_valid_labels;
 
-    device_buffer_t<float> d_sort_center_x;
-    device_buffer_t<float> d_sort_center_y;
-    device_buffer_t<uint32_t> d_sort_boundary_ids;
-    device_buffer_t<uint64_t> d_sort_keys;
+    // device_buffer_t<float> d_sort_center_x;
+    // device_buffer_t<float> d_sort_center_y;
+    // device_buffer_t<uint32_t> d_sort_boundary_ids;
+    // device_buffer_t<uint64_t> d_sort_keys;
+    //--
 
     device_buffer_t<uint32_t> d_smooth_length_at_start;
 
