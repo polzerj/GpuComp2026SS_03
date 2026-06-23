@@ -65,7 +65,7 @@ def morphological_open(image, kernel, iterations=1):
     return opened
 
 
-def get_external_boundary_mask(binary):
+def get_external_boundary_mask(binary) -> np.ndarray:
     binary = (binary > 0).astype(np.uint8)
     h, w = binary.shape
 
@@ -126,16 +126,37 @@ def get_external_boundary_mask(binary):
     return boundary
 
 
-binary = load_grayscale_image(IMAGE_DIR / "processed" / "binary.png")
-show_img(binary)
+def main(
+    binary_image: np.ndarray | None = None,
+    show_images: bool = False,
+    save_images: bool = False,
+) -> np.ndarray:
+    if binary_image is None:
+        binary = load_grayscale_image(IMAGE_DIR / "processed" / "binary.png")
+    else:
+        binary = binary_image
 
-kernel = np.ones((4, 4), dtype=np.uint8)
-# binary should contain values 0 and 255
-cleaned = morphological_open(binary, kernel, iterations=2)
-show_img(cleaned)
-plt.imsave(IMAGE_DIR / "processed" / "cleaned.png", cleaned, cmap="gray")
+    if show_images:
+        show_img(binary)
 
-boundary = get_external_boundary_mask(cleaned)
-show_img(boundary)
+    kernel = np.ones((4, 4), dtype=np.uint8)
+    # binary should contain values 0 and 255
+    cleaned = morphological_open(binary, kernel, iterations=2)
+    if show_images:
+        show_img(cleaned)
 
-plt.imsave(IMAGE_DIR / "processed" / "boundary.png", boundary, cmap="gray")
+    if save_images:
+        plt.imsave(IMAGE_DIR / "processed" / "cleaned.png", cleaned, cmap="gray")
+
+    boundary = get_external_boundary_mask(cleaned)
+    if show_images:
+        show_img(boundary)
+
+    if save_images:
+        plt.imsave(IMAGE_DIR / "processed" / "boundary.png", boundary, cmap="gray")
+
+    return boundary
+
+
+if __name__ == "__main__":
+    main(IMAGE_DIR / "processed" / "binary.png", show_images=True, save_images=True)
